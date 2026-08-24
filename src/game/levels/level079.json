@@ -1,0 +1,37 @@
+{
+  "id": "level079",
+  "name": "Lucky Hedge",
+  "grid": [
+    ".........",
+    "F.o...E..",
+    ".^^...H..",
+    "###^..o..",
+    "####oF.o.",
+    "#####....",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        7,
+        5
+      ],
+      [
+        6,
+        5
+      ],
+      [
+        5,
+        5
+      ]
+    ]
+  ],
+  "spawnDir": "right",
+  "par": 18,
+  "mechanics": [
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 41
+}

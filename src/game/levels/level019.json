@@ -1,0 +1,37 @@
+{
+  "id": "level019",
+  "name": "Muddy Kennel",
+  "grid": [
+    "^...o...",
+    "##......",
+    "###..oH.",
+    ".Fo...E.",
+    "#.#.##.#",
+    "########",
+    "########"
+  ],
+  "dogs": [
+    [
+      [
+        5,
+        3
+      ],
+      [
+        4,
+        3
+      ],
+      [
+        3,
+        3
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 16,
+  "mechanics": [
+    "reach",
+    "spikes",
+    "freeze"
+  ],
+  "difficulty": 36
+}

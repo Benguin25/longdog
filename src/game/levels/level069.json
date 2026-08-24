@@ -1,0 +1,38 @@
+{
+  "id": "level069",
+  "name": "Snoozy Icicle",
+  "grid": [
+    "........H",
+    ".........",
+    "..oo....F",
+    ".o.E.....",
+    ".^F.....^",
+    ".#.....##",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        5,
+        5
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        3,
+        5
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 26,
+  "mechanics": [
+    "reach",
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 57
+}

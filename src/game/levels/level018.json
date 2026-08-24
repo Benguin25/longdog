@@ -1,0 +1,37 @@
+{
+  "id": "level018",
+  "name": "Drowsy Fountain",
+  "grid": [
+    "o......H",
+    "..F.E...",
+    "^##o....",
+    "########",
+    "########",
+    "########",
+    "########"
+  ],
+  "dogs": [
+    [
+      [
+        4,
+        2
+      ],
+      [
+        5,
+        2
+      ],
+      [
+        6,
+        2
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 15,
+  "mechanics": [
+    "reach",
+    "spikes",
+    "freeze"
+  ],
+  "difficulty": 35
+}

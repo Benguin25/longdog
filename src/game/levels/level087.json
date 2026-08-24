@@ -1,0 +1,39 @@
+{
+  "id": "level087",
+  "name": "Snoozy Gnome",
+  "grid": [
+    ".......HE.",
+    "..........",
+    "....o.....",
+    "oo^.FF....",
+    "^####^.###",
+    "##########",
+    "##########",
+    "##########"
+  ],
+  "dogs": [
+    [
+      [
+        9,
+        3
+      ],
+      [
+        8,
+        3
+      ],
+      [
+        7,
+        3
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 35,
+  "mechanics": [
+    "reach",
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 70
+}

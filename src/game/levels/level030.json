@@ -1,0 +1,38 @@
+{
+  "id": "level030",
+  "name": "Frosty Chimney",
+  "grid": [
+    "....H..o.",
+    "#.....oo#",
+    "......F..",
+    ".^##.E...",
+    ".####..^.",
+    "######.#^",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        3,
+        2
+      ],
+      [
+        4,
+        2
+      ],
+      [
+        5,
+        2
+      ]
+    ]
+  ],
+  "spawnDir": "right",
+  "par": 21,
+  "mechanics": [
+    "reach",
+    "spikes",
+    "freeze",
+    "ration"
+  ],
+  "difficulty": 49
+}

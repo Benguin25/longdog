@@ -1,0 +1,37 @@
+{
+  "id": "level078",
+  "name": "Sniffy Chimney",
+  "grid": [
+    "oH.......",
+    "o###...o.",
+    ".E...##oF",
+    ".....####",
+    ".#..#####",
+    "##F.#####",
+    "##..#####"
+  ],
+  "dogs": [
+    [
+      [
+        3,
+        0
+      ],
+      [
+        4,
+        0
+      ],
+      [
+        5,
+        0
+      ]
+    ]
+  ],
+  "spawnDir": "right",
+  "par": 27,
+  "mechanics": [
+    "reach",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 53
+}

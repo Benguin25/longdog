@@ -1,0 +1,37 @@
+{
+  "id": "level065",
+  "name": "Shady Icicle",
+  "grid": [
+    "..H.o...o",
+    "o.###o...",
+    ".F...###.",
+    ".......F.",
+    "^#...#..E",
+    "###.###..",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        4,
+        4
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        2,
+        4
+      ]
+    ]
+  ],
+  "spawnDir": "right",
+  "par": 30,
+  "mechanics": [
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 58
+}

@@ -1,0 +1,37 @@
+{
+  "id": "level072",
+  "name": "Bouncy Trellis",
+  "grid": [
+    "..o...H..",
+    "..F#.#.##",
+    "##E......",
+    ".........",
+    "..oF.....",
+    "...#.....",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        5,
+        5
+      ],
+      [
+        6,
+        5
+      ],
+      [
+        7,
+        5
+      ]
+    ]
+  ],
+  "spawnDir": "right",
+  "par": 22,
+  "mechanics": [
+    "reach",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 47
+}

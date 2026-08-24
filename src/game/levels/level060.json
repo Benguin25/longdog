@@ -1,0 +1,37 @@
+{
+  "id": "level060",
+  "name": "Chain Reaction",
+  "grid": [
+    "o.....Eo.",
+    "..H...##.",
+    "...o...Fo",
+    ".###..F##",
+    "#####...#",
+    "#########",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        2,
+        2
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        0,
+        2
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 29,
+  "mechanics": [
+    "reach",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 58
+}

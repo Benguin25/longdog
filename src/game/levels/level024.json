@@ -1,0 +1,38 @@
+{
+  "id": "level024",
+  "name": "Drowsy Sprinkler",
+  "grid": [
+    "^......H.",
+    "....o.##.",
+    ".o...#...",
+    ".o..E....",
+    ".^.......",
+    ".#F##..o.",
+    "#####..##"
+  ],
+  "dogs": [
+    [
+      [
+        4,
+        4
+      ],
+      [
+        5,
+        4
+      ],
+      [
+        6,
+        4
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 21,
+  "mechanics": [
+    "reach",
+    "spikes",
+    "freeze",
+    "ration"
+  ],
+  "difficulty": 49
+}
