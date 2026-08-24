@@ -100,6 +100,10 @@ export interface LevelData {
   readonly spawnDir?: string;
   /** Optimal move count from the solver (informational, for star scoring). */
   readonly par?: number;
+  /** Generator metadata: mechanics present in the level (informational). */
+  readonly mechanics?: readonly string[];
+  /** Generator metadata: difficulty score (informational). */
+  readonly difficulty?: number;
 }
 
 // ---------------------------------------------------------------------------

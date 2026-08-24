@@ -1,22 +1,34 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
-import { HAPTICS_ENABLED, STARS_PAR_WINDOW, SWIPE_MIN_DISTANCE } from '../../src/game/config';
-import type { Dir } from '../../src/game/rules';
+import {
+  HAPTICS_ENABLED,
+  HINT_MAX_STATES,
+  HINT_MOVES,
+  SHOW_HINT_BUTTON,
+  SWIPE_MIN_DISTANCE,
+} from '../../src/game/config';
+import type { Action, Dir } from '../../src/game/rules';
 import { LEVELS } from '../../src/game/levels';
+import { starsForClear } from '../../src/game/scoring';
+import { solveState } from '../../src/game/solve';
 import { GameCanvas } from '../../src/render/GameCanvas';
 import { useGameStore } from '../../src/store/gameStore';
+import { useProgressStore } from '../../src/store/progressStore';
 import { DPad } from '../../src/ui/DPad';
 import { HudButton } from '../../src/ui/HudButton';
 
-function buzz(fn: () => Promise<unknown>) {
-  if (!HAPTICS_ENABLED) return;
-  fn().catch(() => {});
-}
+const HINT_ARROW: Record<Action, string> = {
+  up: '↑',
+  down: '↓',
+  left: '←',
+  right: '→',
+  swap: '⇄',
+};
 
 export default function GameScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -34,8 +46,20 @@ export default function GameScreen() {
   const undo = useGameStore((s) => s.undo);
   const reset = useGameStore((s) => s.reset);
 
+  const hapticsEnabled = useProgressStore((s) => s.hapticsEnabled);
+  const recordClear = useProgressStore((s) => s.recordClear);
+
   const [board, setBoard] = useState({ w: 0, h: 0 });
   const [deadFlash, setDeadFlash] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+
+  const buzz = useCallback(
+    (fn: () => Promise<unknown>) => {
+      if (!HAPTICS_ENABLED || !hapticsEnabled) return;
+      fn().catch(() => {});
+    },
+    [hapticsEnabled],
+  );
 
   useEffect(() => {
     if (id) loadLevel(id);
@@ -44,6 +68,7 @@ export default function GameScreen() {
   // Feedback side effects (haptics + death flash). Presentational only.
   useEffect(() => {
     if (feedbackTick === 0) return;
+    setHint(null); // any input invalidates a shown hint
     if (feedback.kind === 'dead') {
       buzz(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error));
       setDeadFlash(feedback.cause === 'spikes' ? 'Yelp! Spikes!' : 'Yelp! Long fall!');
@@ -55,13 +80,38 @@ export default function GameScreen() {
       if (feedback.events.includes('froze')) buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy));
       if (feedback.events.includes('dogExited')) buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
     }
-  }, [feedback, feedbackTick]);
+  }, [feedback, feedbackTick, buzz]);
+
+  // On win: persist stars, then hand off to the level-clear screen.
+  const clearedRef = useRef(false);
+  useEffect(() => {
+    if (!won || !level || clearedRef.current) return;
+    clearedRef.current = true;
+    buzz(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
+    recordClear(level.id, starsForClear(moveCount, level.par));
+    const t = setTimeout(() => {
+      router.replace(`/clear/${level.id}?moves=${moveCount}`);
+    }, 450);
+    return () => clearTimeout(t);
+  }, [won, level, moveCount, recordClear, router, buzz]);
 
   useEffect(() => {
-    if (won) buzz(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
-  }, [won]);
+    clearedRef.current = false;
+  }, [id]);
 
   const onMove = useCallback((dir: Dir) => dispatch(dir), [dispatch]);
+
+  const onHint = useCallback(() => {
+    const s = useGameStore.getState().state;
+    if (!s || useGameStore.getState().won) return;
+    const report = solveState(s, { maxStates: HINT_MAX_STATES });
+    if (report.solvable && report.solution && report.solution.length > 0) {
+      const moves = report.solution.slice(0, HINT_MOVES).map((a) => HINT_ARROW[a]);
+      setHint(`Hint: ${moves.join('  ')}`);
+    } else {
+      setHint('No way out from here — try Undo');
+    }
+  }, []);
 
   const swipe = Gesture.Pan()
     .runOnJS(true)
@@ -89,16 +139,16 @@ export default function GameScreen() {
 
   const par = level.par;
   const levelIndex = LEVELS.findIndex((l) => l.id === level.id);
-  const nextLevel = levelIndex >= 0 ? LEVELS[levelIndex + 1] : undefined;
-  const stars =
-    par === undefined ? 1 : moveCount <= par ? 3 : moveCount <= par + STARS_PAR_WINDOW ? 2 : 1;
 
   return (
     <SafeAreaView style={styles.screen}>
       <View style={styles.hud}>
-        <HudButton label="‹ Back" onPress={() => router.replace('/')} />
+        <HudButton label="‹ Back" onPress={() => router.replace('/levels')} />
         <View style={styles.hudCenter}>
-          <Text style={styles.header}>{level.name}</Text>
+          <Text style={styles.header}>
+            {levelIndex >= 0 ? `${levelIndex + 1}. ` : ''}
+            {level.name}
+          </Text>
           <Text style={styles.counter}>
             Moves: {moveCount}
             {par !== undefined ? `  ·  Par: ${par}` : ''}
@@ -124,6 +174,11 @@ export default function GameScreen() {
               <Text style={styles.deadText}>{deadFlash}</Text>
             </View>
           )}
+          {hint && (
+            <View style={styles.hintBanner} pointerEvents="none">
+              <Text style={styles.hintText}>{hint}</Text>
+            </View>
+          )}
         </View>
       </GestureDetector>
 
@@ -131,27 +186,16 @@ export default function GameScreen() {
         <View style={styles.sideButtons}>
           <HudButton label="Reset" onPress={reset} />
           {state.dogs.length > 1 && <HudButton label="Swap" onPress={() => dispatch('swap')} />}
+          {SHOW_HINT_BUTTON && <HudButton label="Hint" onPress={onHint} />}
         </View>
         <DPad onMove={onMove} />
         <View style={styles.sideButtons} />
       </View>
 
       {won && (
-        <View style={styles.overlay}>
+        <View style={styles.overlay} pointerEvents="none">
           <View style={styles.clearCard}>
-            <Text style={styles.clearTitle}>Level Clear!</Text>
-            <Text style={styles.clearStars}>{'★'.repeat(stars) + '☆'.repeat(3 - stars)}</Text>
-            <Text style={styles.clearMoves}>
-              {moveCount} moves{par !== undefined ? ` · par ${par}` : ''}
-            </Text>
-            <View style={styles.clearButtons}>
-              <HudButton label="Replay" onPress={reset} />
-              {nextLevel ? (
-                <HudButton label="Next ›" onPress={() => router.replace(`/game/${nextLevel.id}`)} />
-              ) : (
-                <HudButton label="Home" onPress={() => router.replace('/')} />
-              )}
-            </View>
+            <Text style={styles.clearTitle}>Cleared!</Text>
           </View>
         </View>
       )}
@@ -183,6 +227,16 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   deadText: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
+  hintBanner: {
+    position: 'absolute',
+    top: 10,
+    alignSelf: 'center',
+    backgroundColor: '#3B2A1A',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  hintText: { color: '#F6E7B2', fontWeight: '800', fontSize: 18 },
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -197,19 +251,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(59, 42, 26, 0.45)',
+    backgroundColor: 'rgba(59, 42, 26, 0.35)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   clearCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-    minWidth: 240,
+    paddingHorizontal: 28,
+    paddingVertical: 18,
   },
-  clearTitle: { fontSize: 24, fontWeight: '900', color: '#3B2A1A' },
-  clearStars: { fontSize: 30, color: '#E8A33D', marginVertical: 6 },
-  clearMoves: { fontSize: 14, color: '#4A362A', marginBottom: 14 },
-  clearButtons: { flexDirection: 'row', gap: 10 },
+  clearTitle: { fontSize: 26, fontWeight: '900', color: '#3B2A1A' },
 });
