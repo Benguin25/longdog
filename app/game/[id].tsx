@@ -9,9 +9,12 @@ import {
   HAPTICS_ENABLED,
   HINT_MAX_STATES,
   HINT_MOVES,
+  PACK_SIZE,
   SHOW_HINT_BUTTON,
   SWIPE_MIN_DISTANCE,
+  WIN_NAVIGATE_MS,
 } from '../../src/game/config';
+import { initSfx, playSfx, unloadSfx } from '../../src/audio/sfx';
 import type { Action, Dir } from '../../src/game/rules';
 import { LEVELS } from '../../src/game/levels';
 import { starsForClear } from '../../src/game/scoring';
@@ -47,6 +50,7 @@ export default function GameScreen() {
   const reset = useGameStore((s) => s.reset);
 
   const hapticsEnabled = useProgressStore((s) => s.hapticsEnabled);
+  const soundEnabled = useProgressStore((s) => s.soundEnabled);
   const recordClear = useProgressStore((s) => s.recordClear);
 
   const [board, setBoard] = useState({ w: 0, h: 0 });
@@ -65,24 +69,47 @@ export default function GameScreen() {
     if (id) loadLevel(id);
   }, [id, loadLevel]);
 
-  // Feedback side effects (haptics + death flash). Presentational only.
+  // Preload the synthesized sound effects; release them on unmount.
+  useEffect(() => {
+    void initSfx();
+    return () => {
+      void unloadSfx();
+    };
+  }, []);
+
+  // Feedback side effects (sounds + haptics + death flash). Presentational only.
   useEffect(() => {
     if (feedbackTick === 0) return;
     setHint(null); // any input invalidates a shown hint
     if (feedback.kind === 'dead') {
+      playSfx('yelp', soundEnabled);
       buzz(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error));
       setDeadFlash(feedback.cause === 'spikes' ? 'Yelp! Spikes!' : 'Yelp! Long fall!');
       const t = setTimeout(() => setDeadFlash(null), 900);
       return () => clearTimeout(t);
     }
     if (feedback.kind === 'events') {
-      if (feedback.events.includes('ate')) buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
-      if (feedback.events.includes('froze')) buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy));
-      if (feedback.events.includes('dogExited')) buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+      const ev = feedback.events;
+      if (ev.includes('ate')) {
+        playSfx('crunch', soundEnabled);
+        buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
+      }
+      if (ev.includes('froze')) {
+        playSfx('crack', soundEnabled);
+        buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy));
+      }
+      if (ev.includes('spawned')) playSfx('door', soundEnabled);
+      if (ev.includes('fell') && !ev.includes('dogExited')) playSfx('land', soundEnabled);
+      if (ev.includes('dogExited')) {
+        playSfx('bark', soundEnabled);
+        buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedback, feedbackTick, buzz]);
 
-  // On win: persist stars, then hand off to the level-clear screen.
+  // On win: persist stars, then hand off to the level-clear screen
+  // (delayed so the confetti + happy bark get their moment).
   const clearedRef = useRef(false);
   useEffect(() => {
     if (!won || !level || clearedRef.current) return;
@@ -91,7 +118,7 @@ export default function GameScreen() {
     recordClear(level.id, starsForClear(moveCount, level.par));
     const t = setTimeout(() => {
       router.replace(`/clear/${level.id}?moves=${moveCount}`);
-    }, 450);
+    }, WIN_NAVIGATE_MS);
     return () => clearTimeout(t);
   }, [won, level, moveCount, recordClear, router, buzz]);
 
@@ -167,7 +194,16 @@ export default function GameScreen() {
           }
         >
           {board.w > 0 && (
-            <GameCanvas state={state} prevState={prevState} width={board.w} height={board.h} />
+            <GameCanvas
+              state={state}
+              prevState={prevState}
+              width={board.w}
+              height={board.h}
+              pack={levelIndex >= 0 ? Math.floor(levelIndex / PACK_SIZE) : 0}
+              feedback={feedback}
+              feedbackTick={feedbackTick}
+              won={won}
+            />
           )}
           {deadFlash && (
             <View style={styles.deadBanner} pointerEvents="none">
