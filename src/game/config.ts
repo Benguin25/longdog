@@ -182,11 +182,9 @@ export const COLORS = {
   tongue: '#F27D93',
   blush: '#E8935F',
 
-  // Snacks: bones + sausages.
+  // Snacks: bones.
   bone: '#F9EFC8',
-  sausage: '#C25441',
-  sausageShine: '#DE7B60',
-  sausageTie: '#8F3A2C',
+  boneShine: '#FFFDF0',
 
   // Garden rake spikes.
   rakeMetal: '#97A4B0',
