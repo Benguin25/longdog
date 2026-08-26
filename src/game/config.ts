@@ -6,6 +6,14 @@ export const SPAWN_DOG_LENGTH = 3;
 /** Snap-to-tile movement tween duration (ms). Presentational only. */
 export const MOVE_TWEEN_MS = 80;
 
+/** Gravity fall tween: ms per row fallen, clamped to [min, max]. */
+export const FALL_MS_PER_ROW = 70;
+export const FALL_MIN_MS = 90;
+export const FALL_MAX_MS = 450;
+
+/** Dev-only FPS overlay on the game screen (never shown outside __DEV__). */
+export const SHOW_FPS_OVERLAY = true;
+
 /** Minimum swipe travel (px) before a pan gesture counts as a move. */
 export const SWIPE_MIN_DISTANCE = 24;
 

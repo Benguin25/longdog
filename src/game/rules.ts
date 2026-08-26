@@ -82,9 +82,22 @@ export type GameEvent =
 
 export type DeathCause = 'spikes' | 'fell';
 
+/** Rows each dog fell while settling, keyed by dog id (absent = didn't fall). */
+export type FallRows = Readonly<Record<number, number>>;
+
 export type MoveResult =
-  | { readonly status: 'moved'; readonly state: GameState; readonly events: readonly GameEvent[] }
-  | { readonly status: 'won'; readonly state: GameState; readonly events: readonly GameEvent[] }
+  | {
+      readonly status: 'moved';
+      readonly state: GameState;
+      readonly events: readonly GameEvent[];
+      readonly fallRows: FallRows;
+    }
+  | {
+      readonly status: 'won';
+      readonly state: GameState;
+      readonly events: readonly GameEvent[];
+      readonly fallRows: FallRows;
+    }
   | { readonly status: 'blocked' }
   | { readonly status: 'dead'; readonly cause: DeathCause };
 
@@ -158,7 +171,13 @@ export function isWon(state: GameState): boolean {
 // ---------------------------------------------------------------------------
 
 type GravityResult =
-  | { readonly status: 'settled'; readonly dogs: readonly Dog[]; readonly anyFell: boolean }
+  | {
+      readonly status: 'settled';
+      readonly dogs: readonly Dog[];
+      readonly anyFell: boolean;
+      /** Rows fallen per dog, indexed like the dogs array. */
+      readonly rowsFallen: readonly number[];
+    }
   | { readonly status: 'dead'; readonly cause: DeathCause };
 
 /**
@@ -170,6 +189,7 @@ type GravityResult =
 function settle(state: GameState, dogsIn: readonly Dog[]): GravityResult {
   let dogs = dogsIn;
   let anyFell = false;
+  const rowsFallen = dogsIn.map(() => 0);
 
   for (;;) {
     const cellOwner = dogCellMap(dogs);
@@ -195,15 +215,15 @@ function settle(state: GameState, dogsIn: readonly Dog[]): GravityResult {
     }
 
     if (supported.size === dogs.length) {
-      return { status: 'settled', dogs, anyFell };
+      return { status: 'settled', dogs, anyFell, rowsFallen };
     }
 
     anyFell = true;
-    dogs = dogs.map((dog, i) =>
-      supported.has(i)
-        ? dog
-        : { ...dog, cells: dog.cells.map((c) => ({ x: c.x, y: c.y + 1 })) },
-    );
+    dogs = dogs.map((dog, i) => {
+      if (supported.has(i)) return dog;
+      rowsFallen[i] += 1;
+      return { ...dog, cells: dog.cells.map((c) => ({ x: c.x, y: c.y + 1 })) };
+    });
 
     for (let i = 0; i < dogs.length; i++) {
       if (supported.has(i)) continue;
@@ -240,12 +260,17 @@ function finishAction(
   if (settled.status === 'dead') return { status: 'dead', cause: settled.cause };
   if (settled.anyFell) events.push('fell');
 
+  const fallRows: Record<number, number> = {};
+  settled.rowsFallen.forEach((rows, i) => {
+    if (rows > 0) fallRows[dogs[i].id] = rows;
+  });
+
   const active =
     dogs.length === 0 ? 0 : Math.min(patch.activeDog ?? state.activeDog, dogs.length - 1);
   const next: GameState = { ...midState, dogs: settled.dogs, activeDog: active };
 
-  if (isWon(next)) return { status: 'won', state: next, events };
-  return { status: 'moved', state: next, events };
+  if (isWon(next)) return { status: 'won', state: next, events, fallRows };
+  return { status: 'moved', state: next, events, fallRows };
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +383,7 @@ export function swapDog(state: GameState): MoveResult {
     status: 'moved',
     state: { ...state, activeDog: (state.activeDog + 1) % state.dogs.length },
     events: [],
+    fallRows: {},
   };
 }
 

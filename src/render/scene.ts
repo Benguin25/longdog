@@ -8,7 +8,7 @@
 
 import type { Cell, GameState } from '../game/rules';
 import { cellKey } from '../game/rules';
-import type { SkyDecor } from '../game/config';
+import { FALL_MAX_MS, FALL_MIN_MS, FALL_MS_PER_ROW, type SkyDecor } from '../game/config';
 
 export interface Layout {
   readonly tile: number;
@@ -326,6 +326,12 @@ export function buildSkyPaths(width: number, height: number, decor: SkyDecor): S
 // ---------------------------------------------------------------------------
 // Per-segment presentation facts (pure reads of state)
 // ---------------------------------------------------------------------------
+
+/** Duration of the single continuous fall tween for a fall of `rows` cells. */
+export function fallDurationMs(rows: number): number {
+  if (rows <= 0) return 0;
+  return Math.min(FALL_MAX_MS, Math.max(FALL_MIN_MS, rows * FALL_MS_PER_ROW));
+}
 
 /** Whether a dog segment stands on terrain (draws stubby legs). */
 export function segmentGrounded(state: GameState, c: Cell): boolean {
