@@ -151,13 +151,10 @@ export function buildBoardPicture(
         { d: statues.shade, color: COLORS.statueDark },
         { d: statues.cracks, color: COLORS.statueCrack, stroke: ow * 0.4 },
 
-        // Bones + sausages.
-        { d: snacks.boneOutline, color: COLORS.outline, stroke: ow * 0.8 },
+        // Bones (all snacks share one sprite).
+        { d: snacks.boneOutline, color: COLORS.outline, stroke: ow },
         { d: snacks.bone, color: COLORS.bone },
-        { d: snacks.sausage, color: COLORS.outline, stroke: ow * 0.8 },
-        { d: snacks.sausage, color: COLORS.sausage },
-        { d: snacks.sausageShine, color: COLORS.sausageShine },
-        { d: snacks.sausageTie, color: COLORS.sausageTie },
+        { d: snacks.shine, color: COLORS.boneShine, opacity: 0.85 },
       ]);
     },
     { width, height },

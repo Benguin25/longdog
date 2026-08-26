@@ -232,45 +232,70 @@ export function buildFreezePaths(freezeTiles: ReadonlySet<string>, l: Layout): F
 }
 
 // ---------------------------------------------------------------------------
-// Snacks: bones + sausages (alternating deterministically per cell)
+// Snacks: one clear sprite — a cream bone, slightly tilted, with a shine
 // ---------------------------------------------------------------------------
+
+/** Capsule (stadium) between two points as an SVG path. */
+function capsule(x1: number, y1: number, x2: number, y2: number, r: number): string {
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+  const nx = (-(y2 - y1) / len) * r;
+  const ny = ((x2 - x1) / len) * r;
+  return (
+    `M${f(x1 + nx)} ${f(y1 + ny)}L${f(x2 + nx)} ${f(y2 + ny)}` +
+    `A${f(r)} ${f(r)} 0 0 0 ${f(x2 - nx)} ${f(y2 - ny)}` +
+    `L${f(x1 - nx)} ${f(y1 - ny)}A${f(r)} ${f(r)} 0 0 0 ${f(x1 + nx)} ${f(y1 + ny)}Z`
+  );
+}
 
 export interface SnackPaths {
   bone: string;
   boneOutline: string;
-  sausage: string;
-  sausageShine: string;
-  sausageTie: string;
+  /** Subtle highlight along the bar's upper edge. */
+  shine: string;
 }
+
+/** Tilt of the bone sprite (radians; slight counter-clockwise lean). */
+const BONE_TILT = -0.2;
 
 export function buildSnackPaths(snacks: readonly Cell[], l: Layout): SnackPaths {
   const t = l.tile;
   let bone = '';
-  let sausage = '';
-  let sausageShine = '';
-  let sausageTie = '';
+  let shine = '';
+
+  // Unit vector along the tilted bar + screen-up perpendicular.
+  const ux = Math.cos(BONE_TILT);
+  const uy = Math.sin(BONE_TILT);
+  const vx = uy;
+  const vy = -ux;
 
   for (const s of snacks) {
     const cx = px(l, s.x) + t / 2;
     const cy = py(l, s.y) + t / 2;
-    if ((s.x + s.y) % 2 === 0) {
-      // Bone: bar + four knobs.
-      bone += rrect(cx - t * 0.24, cy - t * 0.09, t * 0.48, t * 0.18, t * 0.09);
-      for (const side of [-1, 1]) {
-        bone += circ(cx + side * t * 0.24, cy - t * 0.09, t * 0.115);
-        bone += circ(cx + side * t * 0.24, cy + t * 0.09, t * 0.115);
-      }
-    } else {
-      // Sausage link: two plump capsules with a tie in the middle.
-      sausage += rrect(cx - t * 0.34, cy - t * 0.13, t * 0.32, t * 0.27, t * 0.135);
-      sausage += rrect(cx + t * 0.02, cy - t * 0.13, t * 0.32, t * 0.27, t * 0.135);
-      sausageShine += rrect(cx - t * 0.28, cy - t * 0.08, t * 0.16, t * 0.07, t * 0.035);
-      sausageShine += rrect(cx + t * 0.08, cy - t * 0.08, t * 0.16, t * 0.07, t * 0.035);
-      sausageTie += circ(cx, cy, t * 0.05);
+    const half = t * 0.22;
+    const x1 = cx - ux * half;
+    const y1 = cy - uy * half;
+    const x2 = cx + ux * half;
+    const y2 = cy + uy * half;
+
+    // Bar + two knob lobes at each end.
+    bone += capsule(x1, y1, x2, y2, t * 0.085);
+    const kx = vx * t * 0.088;
+    const ky = vy * t * 0.088;
+    for (const [ex, ey] of [[x1, y1], [x2, y2]] as const) {
+      bone += circ(ex + kx, ey + ky, t * 0.115);
+      bone += circ(ex - kx, ey - ky, t * 0.115);
     }
+
+    shine += capsule(
+      cx - ux * t * 0.13 + vx * t * 0.045,
+      cy - uy * t * 0.13 + vy * t * 0.045,
+      cx + ux * t * 0.01 + vx * t * 0.045,
+      cy + uy * t * 0.01 + vy * t * 0.045,
+      t * 0.03,
+    );
   }
 
-  return { bone, boneOutline: bone, sausage, sausageShine, sausageTie };
+  return { bone, boneOutline: bone, shine };
 }
 
 // ---------------------------------------------------------------------------
