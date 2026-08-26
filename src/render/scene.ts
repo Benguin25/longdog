@@ -339,6 +339,12 @@ export function segmentGrounded(state: GameState, c: Cell): boolean {
   return state.walls.has(below) || state.statues.has(below);
 }
 
+/** Snack cells present in `prev` but not in `state` (just eaten this move). */
+export function eatenSnackCells(state: GameState, prev: GameState | null): Cell[] {
+  if (!prev || state.snacks === prev.snacks) return [];
+  return prev.snacks.filter((s) => !state.snacks.some((c) => c.x === s.x && c.y === s.y));
+}
+
 /** Statue cells present in `state` but not in `prev` (freeze transition). */
 export function newStatueCells(state: GameState, prev: GameState | null): Cell[] {
   if (!prev || state.statues === prev.statues) return [];

@@ -56,6 +56,19 @@ export const SQUASH_SCALE = 0.82;
 export const MUNCH_MS = 240;
 export const MUNCH_SCALE = 0.22;
 
+/** Eat growth: the new head segment scales in small -> overshoot -> settled. */
+export const EAT_GROW_MS = 150;
+export const EAT_GROW_FROM = 0.3;
+export const EAT_GROW_OVERSHOOT = 1.15;
+
+/** Eat "gulp" ripple: per-segment pulse traveling head-to-tail. */
+export const EAT_RIPPLE_SCALE = 1.12;
+export const EAT_RIPPLE_MS = 140;
+export const EAT_RIPPLE_STAGGER_MS = 30;
+
+/** Eaten snack pop-out (brief swell, then shrink to nothing). */
+export const SNACK_POP_MS = 200;
+
 /** Grey-wash duration of the statue (freeze) transition. */
 export const STATUE_WASH_MS = 520;
 

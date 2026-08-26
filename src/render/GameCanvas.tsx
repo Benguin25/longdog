@@ -54,12 +54,19 @@ import {
   DOOR_OPEN_MS,
   DUST_COUNT,
   EAR_FLAP_RADIANS,
+  EAT_GROW_FROM,
+  EAT_GROW_MS,
+  EAT_GROW_OVERSHOOT,
+  EAT_RIPPLE_MS,
+  EAT_RIPPLE_SCALE,
+  EAT_RIPPLE_STAGGER_MS,
   EXIT_PULSE_MS,
   MOVE_TWEEN_MS,
   MUNCH_MS,
   MUNCH_SCALE,
   OUTLINE_FRAC,
   PACK_PALETTES,
+  SNACK_POP_MS,
   SQUASH_MS,
   SQUASH_SCALE,
   STATUE_WASH_MS,
@@ -75,6 +82,8 @@ import {
   buildBoardPicture,
 } from './pictures';
 import {
+  buildSnackPaths,
+  eatenSnackCells,
   fallDurationMs,
   hash01,
   newStatueCells,
@@ -257,6 +266,8 @@ interface DogViewProps {
   /** Rows this dog fell this move (0 = no fall) + the matching tween length. */
   fall: number;
   fallMs: number;
+  /** Dog grew this move (ate a snack): scale in the new head + gulp ripple. */
+  grew: boolean;
   /** Identity of the current GameState — keys the once-per-move retarget. */
   stateRef: GameState;
   moveClock: SharedValue<number>;
@@ -269,7 +280,7 @@ interface DogViewProps {
  * component by `${dog.id}:${cells.length}` — any length change remounts.
  */
 function DogView({
-  cells, fromCells, grounded, active, exitOpen, layout, fall, fallMs, stateRef, moveClock, munch, wag,
+  cells, fromCells, grounded, active, exitOpen, layout, fall, fallMs, grew, stateRef, moveClock, munch, wag,
 }: DogViewProps) {
   const t = layout.tile;
   const n = cells.length;
@@ -289,6 +300,12 @@ function DogView({
   );
   const squash = useSharedValue(1);
 
+  // Per-segment eat scale (grow-in on the new head, gulp ripple behind it).
+  const segScale = cells.map(() =>
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useSharedValue(1),
+  );
+
   // Retarget once per applied state, during render — see the header note.
   // Step: one MOVE_TWEEN_MS linear tween to the pre-fall position. Fall:
   // sequenced single tween over the whole distance, then landing squash.
@@ -306,6 +323,25 @@ function DogView({
             )
           : withTiming(ty, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
     }
+    // Eat feedback, keyed to the same render that grows the dog so the extra
+    // length reads immediately: the new head pops in from small with a brief
+    // overshoot while a gulp ripple travels head-to-tail behind it.
+    if (grew) {
+      segScale[0].value = EAT_GROW_FROM;
+      segScale[0].value = withSequence(
+        withTiming(EAT_GROW_OVERSHOOT, { duration: EAT_GROW_MS * 0.6, easing: Easing.out(Easing.quad) }),
+        withTiming(1, { duration: EAT_GROW_MS * 0.4, easing: Easing.inOut(Easing.quad) }),
+      );
+      for (let i = 1; i < n; i++) {
+        segScale[i].value = withDelay(
+          i * EAT_RIPPLE_STAGGER_MS,
+          withSequence(
+            withTiming(EAT_RIPPLE_SCALE, { duration: EAT_RIPPLE_MS / 2, easing: Easing.out(Easing.quad) }),
+            withTiming(1, { duration: EAT_RIPPLE_MS / 2, easing: Easing.in(Easing.quad) }),
+          ),
+        );
+      }
+    }
     squash.value = 1;
     if (fall > 0) {
       squash.value = withDelay(
@@ -320,9 +356,16 @@ function DogView({
   }, [stateRef, layout]);
 
   // One derived transform per segment; reused by every pass that draws it.
+  // The eat scale pivots on the segment center (identity when resting at 1).
   const segTfs = cells.map((_, i) =>
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    useDerivedValue(() => [{ translateX: xs[i].value }, { translateY: ys[i].value }]),
+    useDerivedValue(() => [
+      { translateX: xs[i].value + half },
+      { translateY: ys[i].value + half },
+      { scale: segScale[i].value },
+      { translateX: -half },
+      { translateY: -half },
+    ]),
   );
 
   // One shared center point per segment for the joint bridges.
@@ -355,7 +398,7 @@ function DogView({
     return [
       { translateX: xs[0].value + half },
       { translateY: ys[0].value + half },
-      { scale: pulse },
+      { scale: pulse * segScale[0].value },
       { scaleX: headFlip },
       { rotate: headRot },
       { translateX: -half },
@@ -390,6 +433,7 @@ function DogView({
       { translateX: xs[n - 1].value + half },
       { translateY: ys[n - 1].value + half },
       { rotate: a },
+      { scale: segScale[n - 1].value },
       { translateX: -half },
       { translateY: -half },
     ];
@@ -533,6 +577,65 @@ function StatueWash({ cells, layout }: { cells: readonly Cell[]; layout: Layout 
           width={t * 0.9} height={t * 0.9} r={t * 0.22} color={COLORS.dogBody}
         />
       ))}
+    </Group>
+  );
+}
+
+/**
+ * A just-eaten snack pops out instead of vanishing: quick swell, then shrink
+ * to nothing. Draws the same art passes as the static board picture (which
+ * has already been rebuilt without this snack).
+ */
+function SnackPop({ cells, layout }: { cells: readonly Cell[]; layout: Layout }) {
+  const t = layout.tile;
+  const ow = t * OUTLINE_FRAC;
+  const v = useSharedValue(0);
+  useEffect(() => {
+    v.value = withTiming(1, { duration: SNACK_POP_MS, easing: Easing.linear });
+  }, [v]);
+
+  const opacity = useDerivedValue(() =>
+    v.value < 0.55 ? 1 : Math.max(0, (1 - v.value) / 0.45),
+  );
+
+  return (
+    <Group opacity={opacity}>
+      {cells.map((c) => {
+        const paths = buildSnackPaths([c], layout);
+        const cx = px(layout, c.x) + t / 2;
+        const cy = py(layout, c.y) + t / 2;
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const tf = useDerivedValue(() => {
+          // Swell to 1.2 over the first quarter, then shrink to 0.
+          const p = v.value;
+          const s = p < 0.25 ? 1 + 0.8 * p : Math.max(0, 1.2 * (1 - (p - 0.25) / 0.75));
+          return [
+            { translateX: cx },
+            { translateY: cy },
+            { scale: s },
+            { translateX: -cx },
+            { translateY: -cy },
+          ];
+        });
+        return (
+          <Group key={`${c.x},${c.y}`} transform={tf}>
+            {!!paths.bone && (
+              <>
+                <Path path={paths.boneOutline} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.8} />
+                <Path path={paths.bone} color={COLORS.bone} />
+              </>
+            )}
+            {!!paths.sausage && (
+              <>
+                <Path path={paths.sausage} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.8} />
+                <Path path={paths.sausage} color={COLORS.sausage} />
+                <Path path={paths.sausageShine} color={COLORS.sausageShine} />
+                <Path path={paths.sausageTie} color={COLORS.sausageTie} />
+              </>
+            )}
+          </Group>
+        );
+      })}
     </Group>
   );
 }
@@ -721,6 +824,7 @@ export function GameCanvas({
   );
 
   const washCells = useMemo(() => newStatueCells(state, prevState), [state, prevState]);
+  const eatenCells = useMemo(() => eatenSnackCells(state, prevState), [state, prevState]);
   const exitOpen = isExitOpen(state);
 
   if (width <= 0 || height <= 0 || layout.tile <= 0) return null;
@@ -742,6 +846,7 @@ export function GameCanvas({
         <Picture picture={boardPicture} />
 
         {washCells.length > 0 && <StatueWash key={`wash${feedbackTick}`} cells={washCells} layout={layout} />}
+        {eatenCells.length > 0 && <SnackPop key={`pop${feedbackTick}`} cells={eatenCells} layout={layout} />}
 
         {state.dogs.map((dog, di) => {
           const prevDog = prevState?.dogs.find((d) => d.id === dog.id);
@@ -766,6 +871,7 @@ export function GameCanvas({
               layout={layout}
               fall={fall}
               fallMs={fallDurationMs(fall)}
+              grew={shift > 0}
               stateRef={state}
               moveClock={moveClock}
               munch={munch}
