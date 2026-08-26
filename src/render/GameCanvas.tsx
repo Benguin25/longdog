@@ -17,12 +17,21 @@
 //   re-derives gravity. Because withTiming retargets from the current
 //   animated value, rapid inputs and interrupted falls catch up smoothly
 //   instead of snapping.
+// - Segment animated values have STABLE IDENTITY across grows: they are
+//   keyed by a tail-anchored segment id (tail = 0), never by array index.
+//   Eating grows the dog at cells[0], which shifts every index by one —
+//   tail-anchored ids leave all existing segments' values untouched and
+//   introduce exactly one new record for the new head. DogView itself is
+//   keyed by dog.id only and never remounts on a length change; values for
+//   just-created records are seeded at their start pose during render and
+//   their tweens start in a post-commit effect (once per eat event), after
+//   Skia has mounted and subscribed to them.
 // - Static layers (sky, board frame, terrain, snacks) are baked into
 //   SkPictures rebuilt only on discrete changes, so an animated frame
 //   replays two pictures instead of re-walking dozens of Path nodes.
 // - Burst effects (dust, confetti, statue wash) mount only while active.
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   Canvas,
   Circle,
@@ -34,7 +43,9 @@ import {
   RoundedRect,
 } from '@shopify/react-native-skia';
 import {
+  cancelAnimation,
   Easing,
+  makeMutable,
   useDerivedValue,
   useSharedValue,
   withDelay,
@@ -256,6 +267,57 @@ function tailAngleFor(cells: readonly Cell[]): number {
   return Math.PI / 2;
 }
 
+/**
+ * One dog segment's animated values. Records are keyed by a TAIL-ANCHORED
+ * segment id (tail = 0), never by array index: eating grows the dog at
+ * cells[0] and shifts every index by one, but tail-anchored ids keep every
+ * existing segment bound to the same record and add exactly one fresh
+ * record for the new head.
+ */
+interface SegAnim {
+  readonly x: SharedValue<number>;
+  readonly y: SharedValue<number>;
+  readonly scale: SharedValue<number>;
+}
+
+const cancelSeg = (s: SegAnim) => {
+  cancelAnimation(s.x);
+  cancelAnimation(s.y);
+  cancelAnimation(s.scale);
+};
+
+/**
+ * Animated group placing one segment (eat scale pivots on the segment
+ * center; identity when resting at 1). Living in a child component keyed by
+ * the stable segment id keeps DogView's own hook count independent of the
+ * dog's length, so a grow never remounts anything but the new head.
+ */
+function SegGroup({
+  seg, half, children,
+}: {
+  seg: SegAnim; half: number; children?: React.ReactNode;
+}) {
+  const tf = useDerivedValue(() => [
+    { translateX: seg.x.value + half },
+    { translateY: seg.y.value + half },
+    { scale: seg.scale.value },
+    { translateX: -half },
+    { translateY: -half },
+  ]);
+  return <Group transform={tf}>{children}</Group>;
+}
+
+/** Joint bridge stroked between two segment centers. */
+function SegBridge({
+  a, b, half, color, width,
+}: {
+  a: SegAnim; b: SegAnim; half: number; color: string; width: number;
+}) {
+  const p1 = useDerivedValue(() => ({ x: a.x.value + half, y: a.y.value + half }));
+  const p2 = useDerivedValue(() => ({ x: b.x.value + half, y: b.y.value + half }));
+  return <Line p1={p1} p2={p2} color={color} style="stroke" strokeWidth={width} strokeCap="round" />;
+}
+
 interface DogViewProps {
   cells: readonly Cell[];
   fromCells: readonly Cell[];
@@ -276,8 +338,11 @@ interface DogViewProps {
 }
 
 /**
- * One live dog. Hook count depends on cells.length, so the parent keys this
- * component by `${dog.id}:${cells.length}` — any length change remounts.
+ * One live dog, keyed by `dog.id` alone — it stays mounted across grows.
+ * Per-segment values live in a tail-anchored pool of makeMutable records
+ * (not useSharedValue hooks), so the hook count here never depends on
+ * cells.length; per-segment derived transforms live in SegGroup/SegBridge
+ * children keyed by segment id.
  */
 function DogView({
   cells, fromCells, grounded, active, exitOpen, layout, fall, fallMs, grew, stateRef, moveClock, munch, wag,
@@ -288,52 +353,73 @@ function DogView({
   const body = active ? COLORS.dogBody : COLORS.dogInactive;
   const earColor = active ? COLORS.dogEar : COLORS.dogInactiveEar;
 
-  // Per-segment animated pixel origin (top-left), seeded at the pre-move
-  // position on mount. All interpolation below happens on the UI thread.
-  const xs = cells.map((_, i) =>
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useSharedValue(px(layout, fromCells[i].x)),
-  );
-  const ys = cells.map((_, i) =>
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useSharedValue(py(layout, fromCells[i].y)),
-  );
+  // Pool of per-segment records keyed by tail-anchored segment id. Records
+  // created during this render (the just-grown head; every segment on first
+  // mount) are seeded at their START pose and listed in freshSids — their
+  // tweens begin in the post-commit effect below, once Skia is subscribed,
+  // so the committed frame already shows the correct starting pose and the
+  // animation is never started on unmounted values.
+  const pool = useRef<Map<number, SegAnim>>(new Map()).current;
+  const freshSids = useRef<Set<number>>(new Set()).current;
+  const growSeen = useRef<GameState | null>(null);
+
+  const segs: SegAnim[] = [];
+  for (let i = 0; i < n; i++) {
+    const sid = n - 1 - i;
+    let rec = pool.get(sid);
+    if (!rec) {
+      rec = {
+        x: makeMutable(px(layout, fromCells[i].x)),
+        y: makeMutable(py(layout, fromCells[i].y)),
+        scale: makeMutable(grew && i === 0 ? EAT_GROW_FROM : 1),
+      };
+      pool.set(sid, rec);
+      freshSids.add(sid);
+    }
+    segs.push(rec);
+  }
+  // After a shrink (undo of an eat) drop the now-unused head records, so a
+  // later regrow starts from a freshly seeded record, not a stale pose.
+  for (const sid of [...pool.keys()]) {
+    if (sid >= n) {
+      cancelSeg(pool.get(sid)!);
+      pool.delete(sid);
+      freshSids.delete(sid);
+    }
+  }
+
   const squash = useSharedValue(1);
 
-  // Per-segment eat scale (grow-in on the new head, gulp ripple behind it).
-  const segScale = cells.map(() =>
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useSharedValue(1),
-  );
-
-  // Retarget once per applied state, during render — see the header note.
-  // Step: one MOVE_TWEEN_MS linear tween to the pre-fall position. Fall:
-  // sequenced single tween over the whole distance, then landing squash.
-  useMemo(() => {
+  // Step+fall tween for one segment, shared by the render-phase retarget of
+  // existing records and the post-commit start for fresh ones. Step: one
+  // MOVE_TWEEN_MS linear tween to the pre-fall position. Fall: sequenced
+  // single tween over the whole distance (landing squash is separate).
+  const retargetSeg = (s: SegAnim, i: number) => {
     const fallPx = fall * t;
+    const tx = px(layout, cells[i].x);
+    const ty = py(layout, cells[i].y);
+    s.x.value = withTiming(tx, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+    s.y.value =
+      fall > 0
+        ? withSequence(
+            withTiming(ty - fallPx, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
+            withTiming(ty, { duration: fallMs, easing: Easing.in(Easing.quad) }),
+          )
+        : withTiming(ty, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+  };
+
+  // Retarget EXISTING records once per applied state, during render — see
+  // the header note. On an eat the pre-existing segments also carry the
+  // gulp ripple, triggered once per eat event (grown-state identity), so a
+  // later unrelated re-render can never re-fire or reset it.
+  useMemo(() => {
     for (let i = 0; i < n; i++) {
-      const tx = px(layout, cells[i].x);
-      const ty = py(layout, cells[i].y);
-      xs[i].value = withTiming(tx, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
-      ys[i].value =
-        fall > 0
-          ? withSequence(
-              withTiming(ty - fallPx, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
-              withTiming(ty, { duration: fallMs, easing: Easing.in(Easing.quad) }),
-            )
-          : withTiming(ty, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+      if (!freshSids.has(n - 1 - i)) retargetSeg(segs[i], i);
     }
-    // Eat feedback, keyed to the same render that grows the dog so the extra
-    // length reads immediately: the new head pops in from small with a brief
-    // overshoot while a gulp ripple travels head-to-tail behind it.
-    if (grew) {
-      segScale[0].value = EAT_GROW_FROM;
-      segScale[0].value = withSequence(
-        withTiming(EAT_GROW_OVERSHOOT, { duration: EAT_GROW_MS * 0.6, easing: Easing.out(Easing.quad) }),
-        withTiming(1, { duration: EAT_GROW_MS * 0.4, easing: Easing.inOut(Easing.quad) }),
-      );
+    if (grew && growSeen.current !== stateRef) {
+      growSeen.current = stateRef;
       for (let i = 1; i < n; i++) {
-        segScale[i].value = withDelay(
+        segs[i].scale.value = withDelay(
           i * EAT_RIPPLE_STAGGER_MS,
           withSequence(
             withTiming(EAT_RIPPLE_SCALE, { duration: EAT_RIPPLE_MS / 2, easing: Easing.out(Easing.quad) }),
@@ -355,23 +441,34 @@ function DogView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stateRef, layout]);
 
-  // One derived transform per segment; reused by every pass that draws it.
-  // The eat scale pivots on the segment center (identity when resting at 1).
-  const segTfs = cells.map((_, i) =>
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useDerivedValue(() => [
-      { translateX: xs[i].value + half },
-      { translateY: ys[i].value + half },
-      { scale: segScale[i].value },
-      { translateX: -half },
-      { translateY: -half },
-    ]),
-  );
+  // Start the tweens for records created this commit: the new head moves
+  // into the snack cell like any normal step (plus the grow-in pop), and a
+  // first mount runs its spawn fall. React flushes this effect before any
+  // following render, so a rapid next move retargets from wherever these
+  // tweens have gotten to — no snapping.
+  useEffect(() => {
+    if (freshSids.size === 0) return;
+    for (let i = 0; i < n; i++) {
+      if (!freshSids.has(n - 1 - i)) continue;
+      retargetSeg(segs[i], i);
+      if (grew && i === 0) {
+        segs[i].scale.value = withSequence(
+          withTiming(EAT_GROW_OVERSHOOT, { duration: EAT_GROW_MS * 0.6, easing: Easing.out(Easing.quad) }),
+          withTiming(1, { duration: EAT_GROW_MS * 0.4, easing: Easing.inOut(Easing.quad) }),
+        );
+      }
+    }
+    freshSids.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stateRef, layout]);
 
-  // One shared center point per segment for the joint bridges.
-  const centers = cells.map((_, i) =>
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useDerivedValue(() => ({ x: xs[i].value + half, y: ys[i].value + half })),
+  // Cancel any in-flight UI-thread animations when the dog leaves the board.
+  useEffect(
+    () => () => {
+      pool.forEach(cancelSeg);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   );
 
   // Landing squash: whole-dog scale pivoted at the dog's ground line.
@@ -389,6 +486,12 @@ function DogView({
     ];
   });
 
+  // Head/tail records: the head's record changes identity on a grow (new
+  // tail-anchored id), which rebuilds the derived transforms below; the
+  // tail's record (id 0) is stable for the dog's whole life.
+  const headSeg = segs[0];
+  const tailSeg = segs[n - 1];
+
   // Head details: munch pulse + facing orientation, all around tile center.
   const facing = headFacing(cells);
   const headFlip = facing === 'left' ? -1 : 1;
@@ -396,9 +499,9 @@ function DogView({
   const headTf = useDerivedValue(() => {
     const pulse = active ? 1 + MUNCH_SCALE * Math.sin(Math.min(munch.value, 1) * Math.PI) : 1;
     return [
-      { translateX: xs[0].value + half },
-      { translateY: ys[0].value + half },
-      { scale: pulse * segScale[0].value },
+      { translateX: headSeg.x.value + half },
+      { translateY: headSeg.y.value + half },
+      { scale: pulse * headSeg.scale.value },
       { scaleX: headFlip },
       { rotate: headRot },
       { translateX: -half },
@@ -430,10 +533,10 @@ function DogView({
   const tailTf = useDerivedValue(() => {
     const a = baseTailAngle + (wagOn ? WAG_RADIANS * Math.sin(wag.value * Math.PI * 2) : 0);
     return [
-      { translateX: xs[n - 1].value + half },
-      { translateY: ys[n - 1].value + half },
+      { translateX: tailSeg.x.value + half },
+      { translateY: tailSeg.y.value + half },
       { rotate: a },
-      { scale: segScale[n - 1].value },
+      { scale: tailSeg.scale.value },
       { translateX: -half },
       { translateY: -half },
     ];
@@ -456,7 +559,7 @@ function DogView({
       {/* Stubby legs under grounded segments. */}
       {cells.map((_, i) =>
         grounded[i] ? (
-          <Group key={`leg${i}`} transform={segTfs[i]}>
+          <SegGroup key={`leg${n - 1 - i}`} seg={segs[i]} half={half}>
             {[t * 0.16, t * 0.6].map((lx) => (
               <Group key={lx}>
                 <RoundedRect
@@ -469,35 +572,37 @@ function DogView({
                 />
               </Group>
             ))}
-          </Group>
+          </SegGroup>
         ) : null,
       )}
 
-      {/* Outline pass: segments + joint bridges (drawn before every fill). */}
+      {/* Outline pass: segments + joint bridges (drawn before every fill).
+          Everything below is keyed by tail-anchored segment id, so a grow
+          mounts only the new head's nodes. */}
       {cells.map((_, i) => (
-        <Group key={`o${i}`} transform={segTfs[i]}>
+        <SegGroup key={`o${n - 1 - i}`} seg={segs[i]} half={half}>
           <RoundedRect
             x={t * segPad} y={t * segPad} width={t * SEG_OUT} height={t * SEG_OUT}
             r={t * SEG_OUT * CORNER_RADIUS_FRAC} color={COLORS.outline}
           />
-        </Group>
+        </SegGroup>
       ))}
       {cells.slice(1).map((_, i) => (
-        <Line
-          key={`ob${i}`} p1={centers[i]} p2={centers[i + 1]}
-          color={COLORS.outline} style="stroke" strokeWidth={t * BRIDGE_OUT} strokeCap="round"
+        <SegBridge
+          key={`ob${n - 2 - i}`} a={segs[i]} b={segs[i + 1]} half={half}
+          color={COLORS.outline} width={t * BRIDGE_OUT}
         />
       ))}
 
       {/* Fill pass. */}
       {cells.slice(1).map((_, i) => (
-        <Line
-          key={`fb${i}`} p1={centers[i]} p2={centers[i + 1]}
-          color={body} style="stroke" strokeWidth={t * BRIDGE_FILL} strokeCap="round"
+        <SegBridge
+          key={`fb${n - 2 - i}`} a={segs[i]} b={segs[i + 1]} half={half}
+          color={body} width={t * BRIDGE_FILL}
         />
       ))}
       {cells.map((_, i) => (
-        <Group key={`f${i}`} transform={segTfs[i]}>
+        <SegGroup key={`f${n - 1 - i}`} seg={segs[i]} half={half}>
           <RoundedRect
             x={t * fillPad} y={t * fillPad} width={t * SEG_FILL} height={t * SEG_FILL}
             r={t * SEG_FILL * CORNER_RADIUS_FRAC} color={body}
@@ -507,7 +612,7 @@ function DogView({
             x={t * 0.28} y={t * 0.56} width={t * 0.44} height={t * 0.2} r={t * 0.1}
             color={COLORS.dogBelly} opacity={0.55}
           />
-        </Group>
+        </SegGroup>
       ))}
 
       {/* Head details: ear, snout, big eyes (local space faces right). */}
@@ -849,9 +954,11 @@ export function GameCanvas({
             return prevDog.cells[j];
           });
           const grounded = dog.cells.map((c) => segmentGrounded(state, c));
+          // Keyed by dog.id ONLY: an eat changes cells.length, and a remount
+          // there would discard every segment's in-flight animation values.
           return (
             <DogView
-              key={`${dog.id}:${dog.cells.length}`}
+              key={dog.id}
               cells={dog.cells}
               fromCells={fromCells}
               grounded={grounded}
