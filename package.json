@@ -38,7 +38,9 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "solve": "tsx scripts/solver.ts",
-    "generate": "tsx scripts/generator.ts"
+    "generate": "tsx scripts/generator.ts",
+    "sounds": "tsx scripts/sounds.ts",
+    "profile": "tsx scripts/profile.ts"
   },
   "private": true
 }

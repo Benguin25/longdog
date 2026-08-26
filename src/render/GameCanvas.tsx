@@ -1,266 +1,302 @@
-// Skia board renderer with placeholder art. Purely presentational: it draws
-// the GameState it is given and never touches game logic. Movement uses a
-// single snap-to-tile tween (prevState -> state) driven by one progress
-// value; animations never affect state.
+// Skia board renderer — full cartoon art pass. Purely presentational: it
+// draws the GameState it is given and never touches game logic. Movement
+// uses a single snap-to-tile tween (prevState -> state) driven by one
+// progress value; every other animation is triggered by feedback events.
+// Animations never affect state.
+//
+// Performance notes (see scripts/profile.ts for the headless numbers):
+// - All static art (walls, rakes, statues, mats, snacks, sky decor) is
+//   batched into a handful of SVG path strings built in src/render/scene.ts
+//   and memoized on the identity of the sets they derive from — a move
+//   re-renders ~a dozen Path nodes instead of hundreds of components.
+// - The move tween animates only the dog segments (one derived transform
+//   per segment + two shared points per joint), all on the UI thread.
+// - Burst effects (dust, confetti, statue wash) mount only while active.
 
-import React, { useEffect, useMemo } from 'react';
-import { Canvas, Circle, Group, Path, Rect, RoundedRect } from '@shopify/react-native-skia';
-import { useDerivedValue, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
+import React, { memo, useEffect, useMemo } from 'react';
+import {
+  Canvas,
+  Circle,
+  Group,
+  Line,
+  LinearGradient,
+  Path,
+  Rect,
+  RoundedRect,
+  vec,
+} from '@shopify/react-native-skia';
+import {
+  Easing,
+  useDerivedValue,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withSpring,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 
-import { BOARD_MARGIN, COLORS, CORNER_RADIUS_FRAC, MOVE_TWEEN_MS } from '../game/config';
-import { cellKey, isExitOpen, type Cell, type Dir, type GameState } from '../game/rules';
+import {
+  BOARD_MARGIN,
+  COLORS,
+  CONFETTI_COUNT,
+  CORNER_RADIUS_FRAC,
+  DEATH_FX_MS,
+  DOOR_OPEN_MS,
+  DUST_COUNT,
+  EAR_FLAP_RADIANS,
+  EXIT_PULSE_MS,
+  MOVE_TWEEN_MS,
+  MUNCH_MS,
+  MUNCH_SCALE,
+  OUTLINE_FRAC,
+  PACK_PALETTES,
+  SQUASH_MS,
+  SQUASH_SCALE,
+  STATUE_WASH_MS,
+  WAG_CYCLE_MS,
+  WAG_RADIANS,
+  WIN_FX_MS,
+  type PackPalette,
+} from '../game/config';
+import { isExitOpen, type Cell, type Dir, type GameState } from '../game/rules';
+import type { Feedback } from '../store/gameStore';
+import {
+  buildFreezePaths,
+  buildRakePaths,
+  buildSkyPaths,
+  buildSnackPaths,
+  buildStatuePaths,
+  buildWallPaths,
+  hash01,
+  newStatueCells,
+  segmentGrounded,
+  type Layout,
+} from './scene';
 
-interface Layout {
-  tile: number;
-  ox: number;
-  oy: number;
-}
+const px = (l: Layout, gx: number) => l.ox + gx * l.tile;
+const py = (l: Layout, gy: number) => l.oy + gy * l.tile;
 
-const px = (layout: Layout, gx: number) => layout.ox + gx * layout.tile;
-const py = (layout: Layout, gy: number) => layout.oy + gy * layout.tile;
+// Dog blob proportions (fractions of a tile). Fill passes are drawn after
+// all outline passes so adjacent segments merge into one thick-outlined
+// blob with a slight sausage-link waist at each joint.
+const SEG_OUT = 0.94;
+const SEG_FILL = 0.8;
+const BRIDGE_OUT = 0.86;
+const BRIDGE_FILL = 0.66;
 
-// ---------------------------------------------------------------------------
-// Animated dog pieces
-// ---------------------------------------------------------------------------
-
-interface SegProps {
-  fx: number;
-  fy: number;
-  tx: number;
-  ty: number;
-  progress: SharedValue<number>;
-  tile: number;
+/** Memoized SVG path node — stable string ⇒ no re-parse, no re-render. */
+const SPath = memo(function SPath({
+  d,
+  color,
+  opacity,
+  stroke,
+  cap,
+}: {
+  d: string;
   color: string;
-}
+  opacity?: number;
+  stroke?: number;
+  cap?: 'round' | 'butt';
+}) {
+  if (!d) return null;
+  return (
+    <Path
+      path={d}
+      color={color}
+      opacity={opacity}
+      style={stroke !== undefined ? 'stroke' : 'fill'}
+      strokeWidth={stroke}
+      strokeCap={cap ?? 'round'}
+      strokeJoin="round"
+    />
+  );
+});
 
-function BodySegment({ fx, fy, tx, ty, progress, tile, color }: SegProps) {
-  const pad = tile * 0.06;
-  const x = useDerivedValue(() => fx + (tx - fx) * progress.value + pad);
-  const y = useDerivedValue(() => fy + (ty - fy) * progress.value + pad);
-  const size = tile - pad * 2;
+// ---------------------------------------------------------------------------
+// Terrain + props (static per state, batched paths)
+// ---------------------------------------------------------------------------
+
+function Terrain({ state, layout, pal }: { state: GameState; layout: Layout; pal: PackPalette }) {
+  const t = layout.tile;
+  const walls = useMemo(() => buildWallPaths(state.walls, layout), [state.walls, layout]);
+  const rakes = useMemo(() => buildRakePaths(state.spikes, layout), [state.spikes, layout]);
+  const mats = useMemo(() => buildFreezePaths(state.freezeTiles, layout), [state.freezeTiles, layout]);
+  const statues = useMemo(() => buildStatuePaths(state.statues, layout), [state.statues, layout]);
+  const snacks = useMemo(() => buildSnackPaths(state.snacks, layout), [state.snacks, layout]);
+  const ow = t * OUTLINE_FRAC;
+
   return (
     <Group>
-      <RoundedRect x={x} y={y} width={size} height={size} r={tile * CORNER_RADIUS_FRAC} color={COLORS.dogOutline} />
-      <RoundedRect
-        x={useDerivedValue(() => x.value + tile * 0.05)}
-        y={useDerivedValue(() => y.value + tile * 0.05)}
-        width={size - tile * 0.1}
-        height={size - tile * 0.1}
-        r={tile * CORNER_RADIUS_FRAC * 0.8}
-        color={color}
-      />
-    </Group>
-  );
-}
+      {/* Play-dead mats sit behind everything that can pass over them. */}
+      <SPath d={mats.outline} color={COLORS.outline} stroke={ow * 0.9} />
+      <SPath d={mats.mat} color={COLORS.freezeMat} />
+      <SPath d={mats.band} color={COLORS.freezeMatDark} />
+      <SPath d={mats.paw} color={COLORS.freezePaw} />
 
-function DogHead({ facing, ...seg }: SegProps & { facing: Dir }) {
-  const { fx, fy, tx, ty, progress, tile, color } = seg;
-  const transform = useDerivedValue(() => [
-    { translateX: fx + (tx - fx) * progress.value },
-    { translateY: fy + (ty - fy) * progress.value },
-  ]);
+      {/* Dirt blocks with grass caps and one thick contour per cluster. */}
+      <SPath d={walls.dirt} color={pal.dirt} />
+      <SPath d={walls.speckles} color={pal.dirtDark} />
+      <SPath d={walls.blades} color={pal.grassDark} />
+      <SPath d={walls.grass} color={pal.grass} />
+      <SPath d={walls.outline} color={COLORS.outline} stroke={ow * 1.15} />
 
-  // Local coords inside one tile; snout sticks out toward `facing`, eyes sit
-  // perpendicular to it. Placeholder cartoon: big outline square + eyes.
-  const t = tile;
-  const eyeR = t * 0.11;
-  const pupilR = eyeR * 0.5;
-  const centers: Record<Dir, { eyes: [Cell, Cell]; snout: { x: number; y: number; w: number; h: number } }> = {
-    right: {
-      eyes: [
-        { x: t * 0.58, y: t * 0.3 },
-        { x: t * 0.58, y: t * 0.62 },
-      ],
-      snout: { x: t * 0.82, y: t * 0.36, w: t * 0.24, h: t * 0.28 },
-    },
-    left: {
-      eyes: [
-        { x: t * 0.42, y: t * 0.3 },
-        { x: t * 0.42, y: t * 0.62 },
-      ],
-      snout: { x: -t * 0.06, y: t * 0.36, w: t * 0.24, h: t * 0.28 },
-    },
-    up: {
-      eyes: [
-        { x: t * 0.3, y: t * 0.42 },
-        { x: t * 0.7, y: t * 0.42 },
-      ],
-      snout: { x: t * 0.36, y: -t * 0.06, w: t * 0.28, h: t * 0.24 },
-    },
-    down: {
-      eyes: [
-        { x: t * 0.3, y: t * 0.58 },
-        { x: t * 0.7, y: t * 0.58 },
-      ],
-      snout: { x: t * 0.36, y: t * 0.82, w: t * 0.28, h: t * 0.24 },
-    },
-  };
-  const look = centers[facing];
-  const pad = t * 0.03;
+      {/* Garden rakes (spikes). */}
+      <SPath d={rakes.outline} color={COLORS.outline} stroke={ow * 0.8} />
+      <SPath d={rakes.wood} color={COLORS.rakeWood} />
+      <SPath d={rakes.metal} color={COLORS.rakeMetal} />
 
-  return (
-    <Group transform={transform}>
-      <RoundedRect x={pad} y={pad} width={t - pad * 2} height={t - pad * 2} r={t * CORNER_RADIUS_FRAC} color={COLORS.dogOutline} />
-      <RoundedRect
-        x={pad + t * 0.05}
-        y={pad + t * 0.05}
-        width={t - pad * 2 - t * 0.1}
-        height={t - pad * 2 - t * 0.1}
-        r={t * CORNER_RADIUS_FRAC * 0.8}
-        color={color}
-      />
-      <RoundedRect x={look.snout.x} y={look.snout.y} width={look.snout.w} height={look.snout.h} r={t * 0.08} color={COLORS.dogOutline} />
-      <Circle cx={look.snout.x + look.snout.w / 2} cy={look.snout.y + look.snout.h / 2} r={t * 0.06} color={COLORS.nose} />
-      {look.eyes.map((e, i) => (
-        <Group key={i}>
-          <Circle cx={e.x} cy={e.y} r={eyeR} color={COLORS.eyeWhite} />
-          <Circle cx={e.x} cy={e.y} r={pupilR} color={COLORS.eyePupil} />
-        </Group>
-      ))}
+      {/* Petrified dogs. */}
+      <SPath d={statues.outline} color={COLORS.outline} stroke={ow} />
+      <SPath d={statues.fill} color={COLORS.statue} />
+      <SPath d={statues.shade} color={COLORS.statueDark} />
+      <SPath d={statues.cracks} color={COLORS.statueCrack} stroke={ow * 0.4} />
+
+      {/* Bones + sausages. */}
+      <SPath d={snacks.boneOutline} color={COLORS.outline} stroke={ow * 0.8} />
+      <SPath d={snacks.bone} color={COLORS.bone} />
+      <SPath d={snacks.sausage} color={COLORS.outline} stroke={ow * 0.8} />
+      <SPath d={snacks.sausage} color={COLORS.sausage} />
+      <SPath d={snacks.sausageShine} color={COLORS.sausageShine} />
+      <SPath d={snacks.sausageTie} color={COLORS.sausageTie} />
     </Group>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Static tiles
+// Exit dog door (open/closed states, glow pulse, flap swing)
 // ---------------------------------------------------------------------------
 
-function Walls({ state, layout }: { state: GameState; layout: Layout }) {
-  const t = layout.tile;
-  return (
-    <Group>
-      {[...state.walls].map((k) => {
-        const [x, y] = k.split(',').map(Number);
-        const grassTop = !state.walls.has(cellKey(x, y - 1));
-        return (
-          <Group key={k}>
-            <Rect x={px(layout, x)} y={py(layout, y)} width={t} height={t} color={COLORS.wall} />
-            {grassTop && (
-              <Rect x={px(layout, x)} y={py(layout, y)} width={t} height={t * 0.22} color={COLORS.wallTop} />
-            )}
-          </Group>
-        );
-      })}
-    </Group>
-  );
-}
-
-function Spikes({ state, layout }: { state: GameState; layout: Layout }) {
-  const t = layout.tile;
-  return (
-    <Group>
-      {[...state.spikes].map((k) => {
-        const [x, y] = k.split(',').map(Number);
-        const x0 = px(layout, x);
-        const y0 = py(layout, y);
-        const base = y0 + t;
-        const spikes = `M ${x0} ${base} L ${x0 + t * 0.17} ${y0 + t * 0.15} L ${x0 + t * 0.34} ${base} L ${x0 + t * 0.5} ${y0 + t * 0.15} L ${x0 + t * 0.66} ${base} L ${x0 + t * 0.83} ${y0 + t * 0.15} L ${x0 + t} ${base} Z`;
-        return <Path key={k} path={spikes} color={COLORS.spike} />;
-      })}
-    </Group>
-  );
-}
-
-function Statues({ state, layout }: { state: GameState; layout: Layout }) {
-  const t = layout.tile;
-  return (
-    <Group>
-      {[...state.statues].map((k) => {
-        const [x, y] = k.split(',').map(Number);
-        return (
-          <Group key={k}>
-            <RoundedRect x={px(layout, x) + t * 0.04} y={py(layout, y) + t * 0.04} width={t * 0.92} height={t * 0.92} r={t * CORNER_RADIUS_FRAC} color={COLORS.statueShade} />
-            <RoundedRect x={px(layout, x) + t * 0.1} y={py(layout, y) + t * 0.1} width={t * 0.8} height={t * 0.8} r={t * CORNER_RADIUS_FRAC * 0.8} color={COLORS.statue} />
-          </Group>
-        );
-      })}
-    </Group>
-  );
-}
-
-function ExitDoor({ state, layout }: { state: GameState; layout: Layout }) {
+function ExitDoor({
+  state,
+  layout,
+  pulse,
+}: {
+  state: GameState;
+  layout: Layout;
+  pulse: SharedValue<number>;
+}) {
   const t = layout.tile;
   const open = isExitOpen(state);
   const x0 = px(layout, state.exit.x);
   const y0 = py(layout, state.exit.y);
+
+  const openSv = useSharedValue(open ? 1 : 0);
+  useEffect(() => {
+    openSv.value = withTiming(open ? 1 : 0, { duration: 320, easing: Easing.out(Easing.cubic) });
+  }, [open, openSv]);
+
+  const glowR = useDerivedValue(() => t * (0.58 + 0.12 * pulse.value) * openSv.value);
+  const glowR2 = useDerivedValue(() => t * (0.85 + 0.18 * pulse.value) * openSv.value);
+  const glowO = useDerivedValue(() => 0.5 * openSv.value);
+  const glowO2 = useDerivedValue(() => 0.18 * openSv.value);
+
+  // Flap hinged at the top: swings up/away as the door opens.
+  const hinge = y0 + t * 0.12;
+  const flapTf = useDerivedValue(() => [
+    { translateY: hinge },
+    { scaleY: 1 - 0.8 * openSv.value },
+    { translateY: -hinge },
+  ]);
+
   return (
     <Group>
-      {open && <Circle cx={x0 + t / 2} cy={y0 + t / 2} r={t * 0.62} color="#FFF7CC" opacity={0.55} />}
-      <RoundedRect x={x0 + t * 0.08} y={y0 + t * 0.04} width={t * 0.84} height={t * 0.94} r={t * 0.3} color={COLORS.exitFrame} />
+      <Circle cx={x0 + t / 2} cy={y0 + t / 2} r={glowR2} color={COLORS.exitGlow} opacity={glowO2} />
+      <Circle cx={x0 + t / 2} cy={y0 + t / 2} r={glowR} color={COLORS.exitGlow} opacity={glowO} />
       <RoundedRect
-        x={x0 + t * 0.18}
-        y={y0 + t * 0.14}
-        width={t * 0.64}
-        height={t * 0.82}
-        r={t * 0.26}
-        color={open ? COLORS.exitOpen : COLORS.exitClosed}
+        x={x0 + t * 0.06} y={y0 + t * 0.02} width={t * 0.88} height={t * 0.96} r={t * 0.3}
+        color={COLORS.outline} style="stroke" strokeWidth={t * OUTLINE_FRAC}
       />
-    </Group>
-  );
-}
-
-function FreezeTiles({ state, layout }: { state: GameState; layout: Layout }) {
-  const t = layout.tile;
-  return (
-    <Group>
-      {[...state.freezeTiles].map((k) => {
-        const [x, y] = k.split(',').map(Number);
-        const cx = px(layout, x) + t / 2;
-        const cy = py(layout, y) + t / 2;
-        const diamond = `M ${cx} ${cy - t * 0.22} L ${cx + t * 0.22} ${cy} L ${cx} ${cy + t * 0.22} L ${cx - t * 0.22} ${cy} Z`;
-        return (
-          <Group key={k}>
-            <RoundedRect x={px(layout, x) + t * 0.08} y={py(layout, y) + t * 0.08} width={t * 0.84} height={t * 0.84} r={t * 0.2} color={COLORS.freezeTile} opacity={0.85} />
-            <Path path={diamond} color={COLORS.freezeTileMark} />
-          </Group>
-        );
-      })}
-    </Group>
-  );
-}
-
-function DogHouse({ state, layout }: { state: GameState; layout: Layout }) {
-  if (!state.doghouse) return null;
-  const t = layout.tile;
-  const x0 = px(layout, state.doghouse.x);
-  const y0 = py(layout, state.doghouse.y);
-  const roof = `M ${x0} ${y0 + t * 0.38} L ${x0 + t / 2} ${y0 + t * 0.02} L ${x0 + t} ${y0 + t * 0.38} Z`;
-  return (
-    <Group>
-      <Rect x={x0 + t * 0.1} y={y0 + t * 0.38} width={t * 0.8} height={t * 0.6} color={COLORS.doghouse} />
-      <Path path={roof} color={COLORS.doghouseRoof} />
-      <Circle cx={x0 + t / 2} cy={y0 + t * 0.72} r={t * 0.18} color={COLORS.exitFrame} />
-    </Group>
-  );
-}
-
-function Snacks({ state, layout }: { state: GameState; layout: Layout }) {
-  const t = layout.tile;
-  return (
-    <Group>
-      {state.snacks.map((s) => {
-        const cx = px(layout, s.x) + t / 2;
-        const cy = py(layout, s.y) + t / 2;
-        // Placeholder bone: bar with two knobs at each end.
-        return (
-          <Group key={cellKey(s.x, s.y)}>
-            <RoundedRect x={cx - t * 0.24} y={cy - t * 0.09} width={t * 0.48} height={t * 0.18} r={t * 0.09} color={COLORS.snackOutline} />
-            {[-1, 1].map((side) => (
-              <Group key={side}>
-                <Circle cx={cx + side * t * 0.24} cy={cy - t * 0.08} r={t * 0.11} color={COLORS.snackOutline} />
-                <Circle cx={cx + side * t * 0.24} cy={cy + t * 0.08} r={t * 0.11} color={COLORS.snackOutline} />
-              </Group>
-            ))}
-            <RoundedRect x={cx - t * 0.22} y={cy - t * 0.06} width={t * 0.44} height={t * 0.12} r={t * 0.06} color={COLORS.snack} />
-          </Group>
-        );
-      })}
+      <RoundedRect
+        x={x0 + t * 0.06} y={y0 + t * 0.02} width={t * 0.88} height={t * 0.96} r={t * 0.3}
+        color={COLORS.exitFrame}
+      />
+      {/* Doorway: warm light when open, dark when shut. */}
+      <RoundedRect
+        x={x0 + t * 0.16} y={y0 + t * 0.12} width={t * 0.68} height={t * 0.84} r={t * 0.26}
+        color={open ? COLORS.exitLight : '#2E2018'}
+      />
+      <Group transform={flapTf}>
+        <RoundedRect
+          x={x0 + t * 0.16} y={y0 + t * 0.12} width={t * 0.68} height={t * 0.84} r={t * 0.26}
+          color={COLORS.exitFlap}
+        />
+        {/* Paw print on the flap. */}
+        <RoundedRect
+          x={x0 + t * 0.38} y={y0 + t * 0.5} width={t * 0.24} height={t * 0.17} r={t * 0.085}
+          color={COLORS.exitFrame}
+        />
+        <Circle cx={x0 + t * 0.38} cy={y0 + t * 0.44} r={t * 0.055} color={COLORS.exitFrame} />
+        <Circle cx={x0 + t * 0.5} cy={y0 + t * 0.4} r={t * 0.06} color={COLORS.exitFrame} />
+        <Circle cx={x0 + t * 0.62} cy={y0 + t * 0.44} r={t * 0.055} color={COLORS.exitFrame} />
+      </Group>
     </Group>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Dogs
+// Dog house (door swings open when a new dog spawns)
+// ---------------------------------------------------------------------------
+
+function DogHouse({
+  state,
+  layout,
+  door,
+}: {
+  state: GameState;
+  layout: Layout;
+  door: SharedValue<number>;
+}) {
+  const t = layout.tile;
+  const house = state.doghouse;
+  const hingeX = (house ? px(layout, house.x) : 0) + t * 0.32;
+  const doorTf = useDerivedValue(() => [
+    { translateX: hingeX },
+    { scaleX: 1 - 0.88 * door.value },
+    { translateX: -hingeX },
+  ]);
+  if (!house) return null;
+
+  const x0 = px(layout, house.x);
+  const y0 = py(layout, house.y);
+  const roof = `M${x0 - t * 0.04} ${y0 + t * 0.42}L${x0 + t * 0.5} ${y0 - t * 0.02}L${x0 + t * 1.04} ${y0 + t * 0.42}Z`;
+
+  return (
+    <Group>
+      <RoundedRect
+        x={x0 + t * 0.06} y={y0 + t * 0.34} width={t * 0.88} height={t * 0.64} r={t * 0.08}
+        color={COLORS.outline} style="stroke" strokeWidth={t * OUTLINE_FRAC * 0.9}
+      />
+      <RoundedRect
+        x={x0 + t * 0.06} y={y0 + t * 0.34} width={t * 0.88} height={t * 0.64} r={t * 0.08}
+        color={COLORS.doghouse}
+      />
+      {/* Dark doorway behind the swinging flap. */}
+      <RoundedRect
+        x={x0 + t * 0.32} y={y0 + t * 0.54} width={t * 0.36} height={t * 0.44} r={t * 0.17}
+        color={COLORS.doghouseDoor}
+      />
+      <Group transform={doorTf}>
+        <RoundedRect
+          x={x0 + t * 0.32} y={y0 + t * 0.54} width={t * 0.36} height={t * 0.44} r={t * 0.17}
+          color={COLORS.doghouseFlap}
+        />
+      </Group>
+      <Path path={roof} color={COLORS.outline} style="stroke" strokeWidth={t * OUTLINE_FRAC * 0.9} strokeJoin="round" />
+      <Path path={roof} color={COLORS.doghouseRoof} />
+      {/* Little bone sign under the eave. */}
+      <RoundedRect x={x0 + t * 0.4} y={y0 + t * 0.44} width={t * 0.2} height={t * 0.07} r={t * 0.035} color={COLORS.bone} />
+      <Circle cx={x0 + t * 0.4} cy={y0 + t * 0.455} r={t * 0.045} color={COLORS.bone} />
+      <Circle cx={x0 + t * 0.4} cy={y0 + t * 0.5} r={t * 0.045} color={COLORS.bone} />
+      <Circle cx={x0 + t * 0.6} cy={y0 + t * 0.455} r={t * 0.045} color={COLORS.bone} />
+      <Circle cx={x0 + t * 0.6} cy={y0 + t * 0.5} r={t * 0.045} color={COLORS.bone} />
+    </Group>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The dachshund
 // ---------------------------------------------------------------------------
 
 function headFacing(cells: readonly Cell[]): Dir {
@@ -272,58 +308,357 @@ function headFacing(cells: readonly Cell[]): Dir {
   return 'down';
 }
 
-function Dogs({
-  state,
-  prevState,
-  layout,
-  progress,
-}: {
-  state: GameState;
-  prevState: GameState | null;
+function tailAngleFor(cells: readonly Cell[]): number {
+  if (cells.length < 2) return Math.PI;
+  const tail = cells[cells.length - 1];
+  const before = cells[cells.length - 2];
+  if (tail.x > before.x) return 0;
+  if (tail.x < before.x) return Math.PI;
+  if (tail.y < before.y) return -Math.PI / 2;
+  return Math.PI / 2;
+}
+
+interface DogViewProps {
+  cells: readonly Cell[];
+  fromCells: readonly Cell[];
+  grounded: readonly boolean[];
+  active: boolean;
+  exitOpen: boolean;
   layout: Layout;
   progress: SharedValue<number>;
+  squash: SharedValue<number>;
+  didFall: boolean;
+  munch: SharedValue<number>;
+  wag: SharedValue<number>;
+}
+
+/**
+ * One live dog. Hook count depends on cells.length, so the parent keys this
+ * component by `${dog.id}:${cells.length}` — any length change remounts.
+ */
+function DogView({
+  cells, fromCells, grounded, active, exitOpen, layout, progress, squash, didFall, munch, wag,
+}: DogViewProps) {
+  const t = layout.tile;
+  const n = cells.length;
+  const half = t / 2;
+  const body = active ? COLORS.dogBody : COLORS.dogInactive;
+  const earColor = active ? COLORS.dogEar : COLORS.dogInactiveEar;
+
+  // Pixel endpoints of the tween, precomputed so worklets capture numbers only.
+  const fxs = fromCells.map((c) => px(layout, c.x));
+  const fys = fromCells.map((c) => py(layout, c.y));
+  const txs = cells.map((c) => px(layout, c.x));
+  const tys = cells.map((c) => py(layout, c.y));
+
+  // One derived transform per segment; reused by every pass that draws it.
+  const segTfs = cells.map((_, i) => {
+    const fx = fxs[i];
+    const fy = fys[i];
+    const tx = txs[i];
+    const ty = tys[i];
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return useDerivedValue(() => [
+      { translateX: fx + (tx - fx) * progress.value },
+      { translateY: fy + (ty - fy) * progress.value },
+    ]);
+  });
+
+  // One shared center point per segment for the joint bridges.
+  const centers = cells.map((_, i) => {
+    const fx = fxs[i] + half;
+    const fy = fys[i] + half;
+    const tx = txs[i] + half;
+    const ty = tys[i] + half;
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return useDerivedValue(() => ({
+      x: fx + (tx - fx) * progress.value,
+      y: fy + (ty - fy) * progress.value,
+    }));
+  });
+
+  // Landing squash: whole-dog scale pivoted at the dog's ground line.
+  const pivotPx = px(layout, (Math.min(...cells.map((c) => c.x)) + Math.max(...cells.map((c) => c.x)) + 1) / 2);
+  const bottomPy = py(layout, Math.max(...cells.map((c) => c.y)) + 1);
+  const dogTf = useDerivedValue(() => {
+    const s = didFall ? squash.value : 1;
+    return [
+      { translateX: pivotPx },
+      { translateY: bottomPy },
+      { scaleX: 1 + (1 - s) * 0.9 },
+      { scaleY: s },
+      { translateX: -pivotPx },
+      { translateY: -bottomPy },
+    ];
+  });
+
+  // Head details: munch pulse + facing orientation, all around tile center.
+  const facing = headFacing(cells);
+  const headFlip = facing === 'left' ? -1 : 1;
+  const headRot = facing === 'up' ? -Math.PI / 2 : facing === 'down' ? Math.PI / 2 : 0;
+  const headTf = useDerivedValue(() => {
+    const x = fxs[0] + (txs[0] - fxs[0]) * progress.value;
+    const y = fys[0] + (tys[0] - fys[0]) * progress.value;
+    const pulse = active ? 1 + MUNCH_SCALE * Math.sin(Math.min(munch.value, 1) * Math.PI) : 1;
+    return [
+      { translateX: x + half },
+      { translateY: y + half },
+      { scale: pulse },
+      { scaleX: headFlip },
+      { rotate: headRot },
+      { translateX: -half },
+      { translateY: -half },
+    ];
+  });
+
+  // Floppy ear flaps while moving (and settles when still).
+  const earTf = useDerivedValue(() => {
+    const a = EAR_FLAP_RADIANS * Math.sin(progress.value * Math.PI);
+    return [
+      { translateX: t * 0.36 },
+      { translateY: t * 0.16 },
+      { rotate: a },
+      { translateX: -t * 0.36 },
+      { translateY: -t * 0.16 },
+    ];
+  });
+
+  // Jaw opens with the munch pulse.
+  const jawTf = useDerivedValue(() => {
+    const open = active ? Math.sin(Math.min(munch.value, 1) * Math.PI) : 0;
+    return [{ translateY: t * 0.68 }, { scaleY: 0.15 + 0.85 * open }, { translateY: -t * 0.68 }];
+  });
+
+  // Tail wag when idle at an open exit (amplitude gated, loop always runs).
+  const baseTailAngle = tailAngleFor(cells);
+  const wagOn = active && exitOpen;
+  const tailTf = useDerivedValue(() => {
+    const a = baseTailAngle + (wagOn ? WAG_RADIANS * Math.sin(wag.value * Math.PI * 2) : 0);
+    const x = fxs[n - 1] + (txs[n - 1] - fxs[n - 1]) * progress.value;
+    const y = fys[n - 1] + (tys[n - 1] - fys[n - 1]) * progress.value;
+    return [
+      { translateX: x + half },
+      { translateY: y + half },
+      { rotate: a },
+      { translateX: -half },
+      { translateY: -half },
+    ];
+  });
+
+  const ow = t * OUTLINE_FRAC;
+  const segPad = (1 - SEG_OUT) / 2;
+  const fillPad = (1 - SEG_FILL) / 2;
+  const tail = `M${t * 0.52} ${t * 0.4}Q${t * 0.95} ${t * 0.28} ${t * 1.16} ${t * 0.38}Q${t * 1.23} ${t * 0.5} ${t * 1.16} ${t * 0.62}Q${t * 0.95} ${t * 0.72} ${t * 0.52} ${t * 0.6}Z`;
+  const ear = `M${t * 0.14} ${t * 0.12}Q${t * 0.42} ${t * 0.04} ${t * 0.44} ${t * 0.3}Q${t * 0.46} ${t * 0.56} ${t * 0.3} ${t * 0.62}Q${t * 0.12} ${t * 0.6} ${t * 0.12} ${t * 0.36}Z`;
+
+  return (
+    <Group transform={dogTf} opacity={active ? 1 : 0.88}>
+      {/* Tail (behind the body). */}
+      <Group transform={tailTf}>
+        <Path path={tail} color={COLORS.outline} style="stroke" strokeWidth={ow} strokeJoin="round" />
+        <Path path={tail} color={body} />
+      </Group>
+
+      {/* Stubby legs under grounded segments. */}
+      {cells.map((_, i) =>
+        grounded[i] ? (
+          <Group key={`leg${i}`} transform={segTfs[i]}>
+            {[t * 0.16, t * 0.6].map((lx) => (
+              <Group key={lx}>
+                <RoundedRect
+                  x={lx - t * 0.02} y={t * 0.78} width={t * 0.2} height={t * 0.34} r={t * 0.08}
+                  color={COLORS.outline}
+                />
+                <RoundedRect
+                  x={lx + t * 0.01} y={t * 0.8} width={t * 0.14} height={t * 0.28} r={t * 0.06}
+                  color={body}
+                />
+              </Group>
+            ))}
+          </Group>
+        ) : null,
+      )}
+
+      {/* Outline pass: segments + joint bridges (drawn before every fill). */}
+      {cells.map((_, i) => (
+        <Group key={`o${i}`} transform={segTfs[i]}>
+          <RoundedRect
+            x={t * segPad} y={t * segPad} width={t * SEG_OUT} height={t * SEG_OUT}
+            r={t * SEG_OUT * CORNER_RADIUS_FRAC} color={COLORS.outline}
+          />
+        </Group>
+      ))}
+      {cells.slice(1).map((_, i) => (
+        <Line
+          key={`ob${i}`} p1={centers[i]} p2={centers[i + 1]}
+          color={COLORS.outline} style="stroke" strokeWidth={t * BRIDGE_OUT} strokeCap="round"
+        />
+      ))}
+
+      {/* Fill pass. */}
+      {cells.slice(1).map((_, i) => (
+        <Line
+          key={`fb${i}`} p1={centers[i]} p2={centers[i + 1]}
+          color={body} style="stroke" strokeWidth={t * BRIDGE_FILL} strokeCap="round"
+        />
+      ))}
+      {cells.map((_, i) => (
+        <Group key={`f${i}`} transform={segTfs[i]}>
+          <RoundedRect
+            x={t * fillPad} y={t * fillPad} width={t * SEG_FILL} height={t * SEG_FILL}
+            r={t * SEG_FILL * CORNER_RADIUS_FRAC} color={body}
+          />
+          {/* Belly highlight. */}
+          <RoundedRect
+            x={t * 0.28} y={t * 0.56} width={t * 0.44} height={t * 0.2} r={t * 0.1}
+            color={COLORS.dogBelly} opacity={0.55}
+          />
+        </Group>
+      ))}
+
+      {/* Head details: ear, snout, big eyes (local space faces right). */}
+      <Group transform={headTf}>
+        <Group transform={earTf}>
+          <Path path={ear} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.7} strokeJoin="round" />
+          <Path path={ear} color={earColor} />
+        </Group>
+
+        {/* Snout + nose + mouth. */}
+        <RoundedRect
+          x={t * 0.62} y={t * 0.42} width={t * 0.48} height={t * 0.28} r={t * 0.13}
+          color={COLORS.outline} style="stroke" strokeWidth={ow * 0.7}
+        />
+        <RoundedRect
+          x={t * 0.62} y={t * 0.42} width={t * 0.48} height={t * 0.28} r={t * 0.13}
+          color={COLORS.dogBelly}
+        />
+        <Group transform={jawTf}>
+          <RoundedRect x={t * 0.72} y={t * 0.66} width={t * 0.26} height={t * 0.16} r={t * 0.07} color={COLORS.outline} />
+          <RoundedRect x={t * 0.75} y={t * 0.68} width={t * 0.2} height={t * 0.11} r={t * 0.05} color={COLORS.tongue} />
+        </Group>
+        <Circle cx={t * 1.02} cy={t * 0.5} r={t * 0.08} color={COLORS.nose} />
+
+        {/* Big expressive eyes with highlights (lidded when inactive). */}
+        {[
+          { cx: t * 0.3, cy: t * 0.34, r: t * 0.135 },
+          { cx: t * 0.58, cy: t * 0.34, r: t * 0.15 },
+        ].map((e, i) => (
+          <Group key={`eye${i}`}>
+            <Circle cx={e.cx} cy={e.cy} r={e.r} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.5} />
+            <Circle cx={e.cx} cy={e.cy} r={e.r} color={COLORS.eyeWhite} />
+            <Circle cx={e.cx + t * 0.045} cy={e.cy + t * 0.015} r={t * 0.065} color={COLORS.eyePupil} />
+            <Circle cx={e.cx + t * 0.02} cy={e.cy - t * 0.02} r={t * 0.026} color={COLORS.eyeWhite} />
+            {!active && (
+              <RoundedRect
+                x={e.cx - e.r} y={e.cy - e.r} width={e.r * 2} height={e.r * 1.05} r={e.r * 0.5}
+                color={COLORS.dogInactive}
+              />
+            )}
+          </Group>
+        ))}
+        <Circle cx={t * 0.3} cy={t * 0.56} r={t * 0.05} color={COLORS.blush} opacity={0.55} />
+      </Group>
+    </Group>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Burst FX (mounted only while active)
+// ---------------------------------------------------------------------------
+
+/** Grey wash fading IN over freshly petrified cells (dog color fades out). */
+function StatueWash({ cells, layout }: { cells: readonly Cell[]; layout: Layout }) {
+  const t = layout.tile;
+  const v = useSharedValue(0);
+  useEffect(() => {
+    v.value = withTiming(1, { duration: STATUE_WASH_MS, easing: Easing.out(Easing.quad) });
+  }, [v]);
+  const opacity = useDerivedValue(() => 1 - v.value);
+  return (
+    <Group opacity={opacity}>
+      {cells.map((c) => (
+        <RoundedRect
+          key={`${c.x},${c.y}`}
+          x={px(layout, c.x) + t * 0.05} y={py(layout, c.y) + t * 0.05}
+          width={t * 0.9} height={t * 0.9} r={t * 0.22} color={COLORS.dogBody}
+        />
+      ))}
+    </Group>
+  );
+}
+
+/** Dust puff + fast-rewind chevrons + white flash on death-undo. */
+function DeathFx({
+  cx, cy, layout, boardW, boardH,
+}: {
+  cx: number; cy: number; layout: Layout; boardW: number; boardH: number;
 }) {
+  const t = layout.tile;
+  const v = useSharedValue(0);
+  useEffect(() => {
+    v.value = withTiming(1, { duration: DEATH_FX_MS, easing: Easing.out(Easing.quad) });
+  }, [v]);
+
+  const flashO = useDerivedValue(() => 0.35 * Math.max(0, 1 - v.value * 2.4));
+  const chevTf = useDerivedValue(() => [{ translateX: (0.5 - v.value) * boardW * 0.28 }]);
+  const chevO = useDerivedValue(() => (v.value < 0.12 ? v.value / 0.12 : Math.max(0, 1 - v.value)));
+
+  const chevron = (x: number) =>
+    `M${x} ${cy}L${x + t * 0.55} ${cy - t * 0.42}V${cy + t * 0.42}Z` +
+    `M${x + t * 0.62} ${cy}L${x + t * 1.17} ${cy - t * 0.42}V${cy + t * 0.42}Z`;
+
   return (
     <Group>
-      {state.dogs.map((dog, di) => {
-        const prevDog = prevState?.dogs.find((d) => d.id === dog.id);
-        const shift = prevDog ? dog.cells.length - prevDog.cells.length : 0;
-        const fromCell = (i: number): Cell => {
-          if (!prevDog) return dog.cells[i];
-          const j = Math.min(Math.max(i - shift, 0), prevDog.cells.length - 1);
-          return prevDog.cells[j];
-        };
-        const active = di === state.activeDog;
-        const facing = headFacing(dog.cells);
+      <Rect x={layout.ox - BOARD_MARGIN} y={layout.oy - BOARD_MARGIN} width={boardW} height={boardH} color="#FFFFFF" opacity={flashO} />
+      {Array.from({ length: DUST_COUNT }, (_, i) => {
+        const ang = (i / DUST_COUNT) * Math.PI * 2 + hash01(i, 91) * 0.8;
+        const speed = 0.55 + 0.55 * hash01(i, 92);
+        const sizeK = 0.7 + 0.6 * hash01(i, 93);
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const dcx = useDerivedValue(() => cx + Math.cos(ang) * t * speed * v.value);
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const dcy = useDerivedValue(() => cy + Math.sin(ang) * t * speed * v.value - t * 0.25 * v.value);
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const dr = useDerivedValue(() => t * (0.2 - 0.14 * v.value) * sizeK);
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const dop = useDerivedValue(() => 0.9 * (1 - v.value));
+        return <Circle key={i} cx={dcx} cy={dcy} r={dr} color={COLORS.dust} opacity={dop} />;
+      })}
+      <Group transform={chevTf} opacity={chevO}>
+        <Path path={chevron(cx - t * 1.9)} color={COLORS.rewind} />
+      </Group>
+    </Group>
+  );
+}
+
+/** Confetti burst on level clear. */
+function Confetti({ width, height }: { width: number; height: number }) {
+  const v = useSharedValue(0);
+  useEffect(() => {
+    v.value = withTiming(1, { duration: WIN_FX_MS, easing: Easing.linear });
+  }, [v]);
+
+  return (
+    <Group>
+      {Array.from({ length: CONFETTI_COUNT }, (_, i) => {
+        const x0 = width * hash01(i, 71);
+        const fall = 0.75 + 0.6 * hash01(i, 72);
+        const wobble = 2 + 3 * hash01(i, 73);
+        const phase = Math.PI * 2 * hash01(i, 74);
+        const spin = (hash01(i, 75) - 0.5) * 14;
+        const size = width * (0.012 + 0.012 * hash01(i, 76));
+        const color = COLORS.confetti[i % COLORS.confetti.length];
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const tf = useDerivedValue(() => [
+          { translateX: x0 + Math.sin(v.value * wobble * Math.PI + phase) * width * 0.04 },
+          { translateY: -height * 0.08 + v.value * fall * height * 1.15 },
+          { rotate: v.value * spin },
+        ]);
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const op = useDerivedValue(() => (v.value < 0.82 ? 1 : Math.max(0, (1 - v.value) / 0.18)));
         return (
-          <Group key={dog.id} opacity={active ? 1 : 0.82}>
-            {dog.cells
-              .map((cell, i) => ({ cell, i }))
-              .slice(1)
-              .reverse()
-              .map(({ cell, i }) => (
-                <BodySegment
-                  key={`${dog.id}:${i}`}
-                  fx={px(layout, fromCell(i).x)}
-                  fy={py(layout, fromCell(i).y)}
-                  tx={px(layout, cell.x)}
-                  ty={py(layout, cell.y)}
-                  progress={progress}
-                  tile={layout.tile}
-                  color={active ? (i % 2 === 0 ? COLORS.dogBody : COLORS.dogBodyAlt) : COLORS.dogInactive}
-                />
-              ))}
-            <DogHead
-              key={`${dog.id}:head`}
-              fx={px(layout, fromCell(0).x)}
-              fy={py(layout, fromCell(0).y)}
-              tx={px(layout, dog.cells[0].x)}
-              ty={py(layout, dog.cells[0].y)}
-              progress={progress}
-              tile={layout.tile}
-              color={active ? COLORS.dogBody : COLORS.dogInactive}
-              facing={facing}
-            />
+          <Group key={i} transform={tf} opacity={op}>
+            <RoundedRect x={-size} y={-size * 0.6} width={size * 2} height={size * 1.2} r={size * 0.3} color={color} />
           </Group>
         );
       })}
@@ -340,18 +675,85 @@ export function GameCanvas({
   prevState,
   width,
   height,
+  pack,
+  feedback,
+  feedbackTick,
+  won,
 }: {
   state: GameState;
   prevState: GameState | null;
   width: number;
   height: number;
+  pack: number;
+  feedback: Feedback;
+  feedbackTick: number;
+  won: boolean;
 }) {
+  const pal = PACK_PALETTES[((pack % PACK_PALETTES.length) + PACK_PALETTES.length) % PACK_PALETTES.length];
+
   const progress = useSharedValue(1);
+  const pulse = useSharedValue(0);
+  const wag = useSharedValue(0);
+  const munch = useSharedValue(1);
+  const squash = useSharedValue(1);
+  const door = useSharedValue(0);
+  const shake = useSharedValue(1);
 
   useEffect(() => {
     progress.value = 0;
     progress.value = withTiming(1, { duration: MOVE_TWEEN_MS });
   }, [state, progress]);
+
+  // Ambient loops (glow pulse, wag clock) — started once.
+  useEffect(() => {
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: EXIT_PULSE_MS / 2, easing: Easing.inOut(Easing.quad) }),
+        withTiming(0, { duration: EXIT_PULSE_MS / 2, easing: Easing.inOut(Easing.quad) }),
+      ),
+      -1,
+    );
+    wag.value = withRepeat(withTiming(1, { duration: WAG_CYCLE_MS, easing: Easing.linear }), -1);
+  }, [pulse, wag]);
+
+  // Event-driven juice triggers.
+  useEffect(() => {
+    if (feedbackTick === 0) return;
+    if (feedback.kind === 'dead') {
+      shake.value = 0;
+      shake.value = withTiming(1, { duration: DEATH_FX_MS, easing: Easing.out(Easing.quad) });
+      return;
+    }
+    if (feedback.kind !== 'events') return;
+    const ev = feedback.events;
+    if (ev.includes('ate')) {
+      munch.value = 0;
+      munch.value = withTiming(1, { duration: MUNCH_MS, easing: Easing.linear });
+    }
+    if (ev.includes('fell')) {
+      squash.value = 1;
+      squash.value = withDelay(
+        MOVE_TWEEN_MS,
+        withSequence(
+          withTiming(SQUASH_SCALE, { duration: SQUASH_MS, easing: Easing.out(Easing.quad) }),
+          withSpring(1, { damping: 9, stiffness: 420 }),
+        ),
+      );
+    }
+    if (ev.includes('spawned')) {
+      door.value = 0;
+      door.value = withSequence(
+        withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) }),
+        withDelay(DOOR_OPEN_MS - 550, withTiming(0, { duration: 330, easing: Easing.in(Easing.quad) })),
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feedbackTick]);
+
+  // Board shake on death (identity when idle: shake rests at 1).
+  const rootTf = useDerivedValue(() => [
+    { translateX: Math.sin(shake.value * Math.PI * 7) * 7 * (1 - shake.value) },
+  ]);
 
   const layout = useMemo<Layout>(() => {
     const tile = Math.floor(
@@ -362,34 +764,84 @@ export function GameCanvas({
     return { tile, ox, oy };
   }, [width, height, state.width, state.height]);
 
-  if (width <= 0 || height <= 0) return null;
+  const sky = useMemo(() => buildSkyPaths(width, height, pal.decor), [width, height, pal.decor]);
+  const washCells = useMemo(() => newStatueCells(state, prevState), [state, prevState]);
+  const exitOpen = isExitOpen(state);
+
+  if (width <= 0 || height <= 0 || layout.tile <= 0) return null;
+
+  const boardW = layout.tile * state.width + BOARD_MARGIN * 2;
+  const boardH = layout.tile * state.height + BOARD_MARGIN * 2;
+  const deadDog = feedback.kind === 'dead' ? state.dogs[state.activeDog] : undefined;
 
   return (
     <Canvas style={{ width, height }}>
-      <Rect x={0} y={0} width={width} height={height} color={COLORS.sky} />
-      <RoundedRect
-        x={layout.ox - 3}
-        y={layout.oy - 3}
-        width={layout.tile * state.width + 6}
-        height={layout.tile * state.height + 6}
-        r={8}
-        color={COLORS.boardLine}
-      />
-      <Rect
-        x={layout.ox}
-        y={layout.oy}
-        width={layout.tile * state.width}
-        height={layout.tile * state.height}
-        color={COLORS.sky}
-      />
-      <ExitDoor state={state} layout={layout} />
-      <DogHouse state={state} layout={layout} />
-      <FreezeTiles state={state} layout={layout} />
-      <Walls state={state} layout={layout} />
-      <Spikes state={state} layout={layout} />
-      <Statues state={state} layout={layout} />
-      <Snacks state={state} layout={layout} />
-      <Dogs state={state} prevState={prevState} layout={layout} progress={progress} />
+      {/* Sky: vertical gradient + per-pack decoration. */}
+      <Rect x={0} y={0} width={width} height={height}>
+        <LinearGradient start={vec(0, 0)} end={vec(0, height)} colors={[pal.skyTop, pal.skyBottom]} />
+      </Rect>
+      <SPath d={sky.alt} color={pal.decorAlt} />
+      <SPath d={sky.altBite} color={pal.skyTop} />
+      <SPath d={sky.main} color={pal.decorColor} opacity={0.92} />
+
+      <Group transform={rootTf}>
+        {/* Board frame. */}
+        <RoundedRect
+          x={layout.ox - BOARD_MARGIN + 2} y={layout.oy - BOARD_MARGIN + 2}
+          width={boardW - 4} height={boardH - 4} r={12}
+          color={pal.frame} style="stroke" strokeWidth={5}
+        />
+
+        <ExitDoor state={state} layout={layout} pulse={pulse} />
+        <DogHouse state={state} layout={layout} door={door} />
+        <Terrain state={state} layout={layout} pal={pal} />
+
+        {washCells.length > 0 && <StatueWash key={`wash${feedbackTick}`} cells={washCells} layout={layout} />}
+
+        {state.dogs.map((dog, di) => {
+          const prevDog = prevState?.dogs.find((d) => d.id === dog.id);
+          const shift = prevDog ? dog.cells.length - prevDog.cells.length : 0;
+          const fromCells = dog.cells.map((_, i) => {
+            if (!prevDog) return dog.cells[i];
+            const j = Math.min(Math.max(i - shift, 0), prevDog.cells.length - 1);
+            return prevDog.cells[j];
+          });
+          const grounded = dog.cells.map((c) => segmentGrounded(state, c));
+          const didFall =
+            prevDog !== undefined &&
+            prevDog.cells.length === dog.cells.length &&
+            dog.cells.every((c, i) => c.y - prevDog.cells[i].y >= 1);
+          return (
+            <DogView
+              key={`${dog.id}:${dog.cells.length}`}
+              cells={dog.cells}
+              fromCells={fromCells}
+              grounded={grounded}
+              active={di === state.activeDog}
+              exitOpen={exitOpen}
+              layout={layout}
+              progress={progress}
+              squash={squash}
+              didFall={didFall}
+              munch={munch}
+              wag={wag}
+            />
+          );
+        })}
+
+        {deadDog && (
+          <DeathFx
+            key={`death${feedbackTick}`}
+            cx={px(layout, deadDog.cells[0].x) + layout.tile / 2}
+            cy={py(layout, deadDog.cells[0].y) + layout.tile / 2}
+            layout={layout}
+            boardW={boardW}
+            boardH={boardH}
+          />
+        )}
+      </Group>
+
+      {won && <Confetti key="confetti" width={width} height={height} />}
     </Canvas>
   );
 }
