@@ -12,11 +12,29 @@ export const SWIPE_MIN_DISTANCE = 24;
 /** Master switch for haptic feedback. */
 export const HAPTICS_ENABLED = true;
 
-/** Spec: free hint button behind a config flag (not built in this milestone). */
-export const SHOW_HINT_BUTTON = false;
+/** Spec: free hint button behind a config flag (later: rewarded ad). */
+export const SHOW_HINT_BUTTON = true;
+
+/** How many optimal moves a hint reveals. */
+export const HINT_MOVES = 3;
+
+/** State cap for the in-app hint solve (keeps worst-case hint time bounded). */
+export const HINT_MAX_STATES = 250_000;
 
 /** Stars: 3 at par, 2 within par + STARS_PAR_WINDOW, 1 for clearing. */
 export const STARS_PAR_WINDOW = 3;
+
+/** Levels per pack (100 levels = 5 packs of 20). */
+export const PACK_SIZE = 20;
+
+/** Pack names + accent colors (palette swap per pack, same tiles). */
+export const PACKS = [
+  { name: 'Backyard', color: '#5FBF4A' },
+  { name: 'Garden', color: '#E8973D' },
+  { name: 'Rooftop', color: '#8E9AA6' },
+  { name: 'Park at Night', color: '#5C6BC0' },
+  { name: 'Snow', color: '#7FC8E8' },
+] as const;
 
 /** Outer margin around the board inside the canvas (px). */
 export const BOARD_MARGIN = 10;

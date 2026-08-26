@@ -1,0 +1,38 @@
+{
+  "id": "level063",
+  "name": "Bouncy Lamppost",
+  "grid": [
+    "o.E......",
+    ".......HF",
+    "....Fo...",
+    "^..#.####",
+    "#########",
+    "#########",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        8,
+        2
+      ],
+      [
+        7,
+        2
+      ],
+      [
+        6,
+        2
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 23,
+  "mechanics": [
+    "reach",
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 51
+}

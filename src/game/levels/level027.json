@@ -1,0 +1,37 @@
+{
+  "id": "level027",
+  "name": "Stubby Rooftop",
+  "grid": [
+    "......H..",
+    ".oo....o.",
+    "###....oF",
+    "...E.....",
+    ".....#^..",
+    "..^####.^",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        5,
+        3
+      ],
+      [
+        6,
+        3
+      ],
+      [
+        7,
+        3
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 19,
+  "mechanics": [
+    "spikes",
+    "freeze",
+    "ration"
+  ],
+  "difficulty": 42
+}

@@ -1,0 +1,37 @@
+{
+  "id": "level032",
+  "name": "Sniffy Fountain",
+  "grid": [
+    "......o..",
+    "....###.E",
+    ".H...#...",
+    "...o.....",
+    "#F.......",
+    "....###.#",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        6,
+        4
+      ],
+      [
+        5,
+        4
+      ],
+      [
+        4,
+        4
+      ]
+    ]
+  ],
+  "spawnDir": "right",
+  "par": 19,
+  "mechanics": [
+    "reach",
+    "freeze",
+    "ration"
+  ],
+  "difficulty": 42
+}

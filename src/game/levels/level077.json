@@ -1,0 +1,37 @@
+{
+  "id": "level077",
+  "name": "Lucky Lawn",
+  "grid": [
+    "....o.o.H",
+    ".........",
+    ".E..F.F..",
+    ".........",
+    "^#o.^....",
+    "###^#...o",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        5,
+        5
+      ],
+      [
+        6,
+        5
+      ],
+      [
+        7,
+        5
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 30,
+  "mechanics": [
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 59
+}

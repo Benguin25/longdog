@@ -1,0 +1,37 @@
+{
+  "id": "level067",
+  "name": "Shady Gnome",
+  "grid": [
+    "..o......",
+    "..^..F...",
+    ".##..H...",
+    ".E.....F.",
+    "....o....",
+    "###..##..",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        2,
+        4
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        0,
+        4
+      ]
+    ]
+  ],
+  "spawnDir": "right",
+  "par": 40,
+  "mechanics": [
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 74
+}

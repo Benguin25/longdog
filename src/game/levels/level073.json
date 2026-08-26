@@ -1,0 +1,37 @@
+{
+  "id": "level073",
+  "name": "Snoozy Bench",
+  "grid": [
+    "...F.o...",
+    ".###...H#",
+    ".#E..#.F.",
+    "##.####..",
+    "##.##.#.o",
+    "###.####^",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        2,
+        0
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 21,
+  "mechanics": [
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 43
+}

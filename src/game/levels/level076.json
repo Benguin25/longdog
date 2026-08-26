@@ -1,0 +1,36 @@
+{
+  "id": "level076",
+  "name": "Stubby Gutter",
+  "grid": [
+    ".........",
+    "...E.....",
+    "........H",
+    ".........",
+    ".........",
+    "Fo##oF.#.",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        4
+      ],
+      [
+        5,
+        4
+      ]
+    ]
+  ],
+  "spawnDir": "left",
+  "par": 27,
+  "mechanics": [
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 50
+}

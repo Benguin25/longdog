@@ -1,0 +1,38 @@
+{
+  "id": "level091",
+  "name": "Pebbly Flowerbed",
+  "grid": [
+    ".E........",
+    "^.......F.",
+    "##...H....",
+    "...o......",
+    "...#..^o..",
+    "Fo######^.",
+    "#########.",
+    "##########"
+  ],
+  "dogs": [
+    [
+      [
+        1,
+        1
+      ],
+      [
+        2,
+        1
+      ],
+      [
+        3,
+        1
+      ]
+    ]
+  ],
+  "spawnDir": "right",
+  "par": 37,
+  "mechanics": [
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 68
+}

@@ -1,0 +1,37 @@
+{
+  "id": "level061",
+  "name": "Pebbly Gnome",
+  "grid": [
+    "......H.E",
+    "o.F...F..",
+    "^.oo....^",
+    "..#######",
+    "###.#####",
+    "#########",
+    "#########"
+  ],
+  "dogs": [
+    [
+      [
+        4,
+        2
+      ],
+      [
+        5,
+        2
+      ],
+      [
+        6,
+        2
+      ]
+    ]
+  ],
+  "spawnDir": "right",
+  "par": 31,
+  "mechanics": [
+    "spikes",
+    "freeze x2",
+    "chained-dogs"
+  ],
+  "difficulty": 61
+}
