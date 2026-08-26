@@ -619,20 +619,9 @@ function SnackPop({ cells, layout }: { cells: readonly Cell[]; layout: Layout })
         });
         return (
           <Group key={`${c.x},${c.y}`} transform={tf}>
-            {!!paths.bone && (
-              <>
-                <Path path={paths.boneOutline} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.8} />
-                <Path path={paths.bone} color={COLORS.bone} />
-              </>
-            )}
-            {!!paths.sausage && (
-              <>
-                <Path path={paths.sausage} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.8} />
-                <Path path={paths.sausage} color={COLORS.sausage} />
-                <Path path={paths.sausageShine} color={COLORS.sausageShine} />
-                <Path path={paths.sausageTie} color={COLORS.sausageTie} />
-              </>
-            )}
+            <Path path={paths.boneOutline} color={COLORS.outline} style="stroke" strokeWidth={ow} />
+            <Path path={paths.bone} color={COLORS.bone} />
+            <Path path={paths.shine} color={COLORS.boneShine} opacity={0.85} />
           </Group>
         );
       })}
