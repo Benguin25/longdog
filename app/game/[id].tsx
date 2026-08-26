@@ -9,7 +9,9 @@ import {
   HAPTICS_ENABLED,
   HINT_MAX_STATES,
   HINT_MOVES,
+  MOVE_TWEEN_MS,
   PACK_SIZE,
+  SHOW_FPS_OVERLAY,
   SHOW_HINT_BUTTON,
   SWIPE_MIN_DISTANCE,
   WIN_NAVIGATE_MS,
@@ -20,9 +22,11 @@ import { LEVELS } from '../../src/game/levels';
 import { starsForClear } from '../../src/game/scoring';
 import { solveState } from '../../src/game/solve';
 import { GameCanvas } from '../../src/render/GameCanvas';
+import { fallDurationMs } from '../../src/render/scene';
 import { useGameStore } from '../../src/store/gameStore';
 import { useProgressStore } from '../../src/store/progressStore';
 import { DPad } from '../../src/ui/DPad';
+import { FpsOverlay } from '../../src/ui/FpsOverlay';
 import { HudButton } from '../../src/ui/HudButton';
 
 const HINT_ARROW: Record<Action, string> = {
@@ -40,6 +44,7 @@ export default function GameScreen() {
   const level = useGameStore((s) => s.level);
   const state = useGameStore((s) => s.state);
   const prevState = useGameStore((s) => s.prevState);
+  const fallRows = useGameStore((s) => s.fallRows);
   const moveCount = useGameStore((s) => s.moveCount);
   const won = useGameStore((s) => s.won);
   const feedback = useGameStore((s) => s.feedback);
@@ -99,10 +104,15 @@ export default function GameScreen() {
         buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy));
       }
       if (ev.includes('spawned')) playSfx('door', soundEnabled);
-      if (ev.includes('fell') && !ev.includes('dogExited')) playSfx('land', soundEnabled);
       if (ev.includes('dogExited')) {
         playSfx('bark', soundEnabled);
         buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+      } else if (ev.includes('fell')) {
+        // Play the thud when the fall tween actually lands, not at move time.
+        const rows = Object.values(useGameStore.getState().fallRows);
+        const landAt = MOVE_TWEEN_MS + fallDurationMs(rows.length ? Math.max(...rows) : 0);
+        const landTimer = setTimeout(() => playSfx('land', soundEnabled), landAt);
+        return () => clearTimeout(landTimer);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -197,6 +207,7 @@ export default function GameScreen() {
             <GameCanvas
               state={state}
               prevState={prevState}
+              fallRows={fallRows}
               width={board.w}
               height={board.h}
               pack={levelIndex >= 0 ? Math.floor(levelIndex / PACK_SIZE) : 0}
@@ -215,6 +226,7 @@ export default function GameScreen() {
               <Text style={styles.hintText}>{hint}</Text>
             </View>
           )}
+          {__DEV__ && SHOW_FPS_OVERLAY && <FpsOverlay />}
         </View>
       </GestureDetector>
 

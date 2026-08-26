@@ -1,29 +1,37 @@
 // Skia board renderer — full cartoon art pass. Purely presentational: it
-// draws the GameState it is given and never touches game logic. Movement
-// uses a single snap-to-tile tween (prevState -> state) driven by one
-// progress value; every other animation is triggered by feedback events.
-// Animations never affect state.
+// draws the GameState it is given and never touches game logic. Animations
+// never affect state.
 //
-// Performance notes (see scripts/profile.ts for the headless numbers):
-// - All static art (walls, rakes, statues, mats, snacks, sky decor) is
-//   batched into a handful of SVG path strings built in src/render/scene.ts
-//   and memoized on the identity of the sets they derive from — a move
-//   re-renders ~a dozen Path nodes instead of hundreds of components.
-// - The move tween animates only the dog segments (one derived transform
-//   per segment + two shared points per joint), all on the UI thread.
+// Animation architecture (see also src/render/pictures.ts):
+// - Game state is discrete: React re-renders this tree once per applied
+//   move, never per animation frame. All interpolation runs on the UI
+//   thread through Reanimated shared values feeding Skia; the JS thread is
+//   idle during a tween.
+// - Each dog segment owns an animated pixel position that is retargeted
+//   once per move DURING RENDER (not in an effect — an effect restart
+//   would commit one frame at the final pose first, a visible flash).
+//   The step is a single MOVE_TWEEN_MS linear withTiming; a gravity fall
+//   is sequenced after it as ONE continuous tween over the whole fall
+//   distance (duration scaled by rows, ease-in, squash on landing) using
+//   the per-dog fall rows reported by the rules — the renderer never
+//   re-derives gravity. Because withTiming retargets from the current
+//   animated value, rapid inputs and interrupted falls catch up smoothly
+//   instead of snapping.
+// - Static layers (sky, board frame, terrain, snacks) are baked into
+//   SkPictures rebuilt only on discrete changes, so an animated frame
+//   replays two pictures instead of re-walking dozens of Path nodes.
 // - Burst effects (dust, confetti, statue wash) mount only while active.
 
-import React, { memo, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   Canvas,
   Circle,
   Group,
   Line,
-  LinearGradient,
   Path,
+  Picture,
   Rect,
   RoundedRect,
-  vec,
 } from '@shopify/react-native-skia';
 import {
   Easing,
@@ -60,15 +68,14 @@ import {
   WIN_FX_MS,
   type PackPalette,
 } from '../game/config';
-import { isExitOpen, type Cell, type Dir, type GameState } from '../game/rules';
+import { isExitOpen, type Cell, type Dir, type FallRows, type GameState } from '../game/rules';
 import type { Feedback } from '../store/gameStore';
 import {
-  buildFreezePaths,
-  buildRakePaths,
-  buildSkyPaths,
-  buildSnackPaths,
-  buildStatuePaths,
-  buildWallPaths,
+  buildSkyPicture,
+  buildBoardPicture,
+} from './pictures';
+import {
+  fallDurationMs,
   hash01,
   newStatueCells,
   segmentGrounded,
@@ -85,84 +92,6 @@ const SEG_OUT = 0.94;
 const SEG_FILL = 0.8;
 const BRIDGE_OUT = 0.86;
 const BRIDGE_FILL = 0.66;
-
-/** Memoized SVG path node — stable string ⇒ no re-parse, no re-render. */
-const SPath = memo(function SPath({
-  d,
-  color,
-  opacity,
-  stroke,
-  cap,
-}: {
-  d: string;
-  color: string;
-  opacity?: number;
-  stroke?: number;
-  cap?: 'round' | 'butt';
-}) {
-  if (!d) return null;
-  return (
-    <Path
-      path={d}
-      color={color}
-      opacity={opacity}
-      style={stroke !== undefined ? 'stroke' : 'fill'}
-      strokeWidth={stroke}
-      strokeCap={cap ?? 'round'}
-      strokeJoin="round"
-    />
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Terrain + props (static per state, batched paths)
-// ---------------------------------------------------------------------------
-
-function Terrain({ state, layout, pal }: { state: GameState; layout: Layout; pal: PackPalette }) {
-  const t = layout.tile;
-  const walls = useMemo(() => buildWallPaths(state.walls, layout), [state.walls, layout]);
-  const rakes = useMemo(() => buildRakePaths(state.spikes, layout), [state.spikes, layout]);
-  const mats = useMemo(() => buildFreezePaths(state.freezeTiles, layout), [state.freezeTiles, layout]);
-  const statues = useMemo(() => buildStatuePaths(state.statues, layout), [state.statues, layout]);
-  const snacks = useMemo(() => buildSnackPaths(state.snacks, layout), [state.snacks, layout]);
-  const ow = t * OUTLINE_FRAC;
-
-  return (
-    <Group>
-      {/* Play-dead mats sit behind everything that can pass over them. */}
-      <SPath d={mats.outline} color={COLORS.outline} stroke={ow * 0.9} />
-      <SPath d={mats.mat} color={COLORS.freezeMat} />
-      <SPath d={mats.band} color={COLORS.freezeMatDark} />
-      <SPath d={mats.paw} color={COLORS.freezePaw} />
-
-      {/* Dirt blocks with grass caps and one thick contour per cluster. */}
-      <SPath d={walls.dirt} color={pal.dirt} />
-      <SPath d={walls.speckles} color={pal.dirtDark} />
-      <SPath d={walls.blades} color={pal.grassDark} />
-      <SPath d={walls.grass} color={pal.grass} />
-      <SPath d={walls.outline} color={COLORS.outline} stroke={ow * 1.15} />
-
-      {/* Garden rakes (spikes). */}
-      <SPath d={rakes.outline} color={COLORS.outline} stroke={ow * 0.8} />
-      <SPath d={rakes.wood} color={COLORS.rakeWood} />
-      <SPath d={rakes.metal} color={COLORS.rakeMetal} />
-
-      {/* Petrified dogs. */}
-      <SPath d={statues.outline} color={COLORS.outline} stroke={ow} />
-      <SPath d={statues.fill} color={COLORS.statue} />
-      <SPath d={statues.shade} color={COLORS.statueDark} />
-      <SPath d={statues.cracks} color={COLORS.statueCrack} stroke={ow * 0.4} />
-
-      {/* Bones + sausages. */}
-      <SPath d={snacks.boneOutline} color={COLORS.outline} stroke={ow * 0.8} />
-      <SPath d={snacks.bone} color={COLORS.bone} />
-      <SPath d={snacks.sausage} color={COLORS.outline} stroke={ow * 0.8} />
-      <SPath d={snacks.sausage} color={COLORS.sausage} />
-      <SPath d={snacks.sausageShine} color={COLORS.sausageShine} />
-      <SPath d={snacks.sausageTie} color={COLORS.sausageTie} />
-    </Group>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Exit dog door (open/closed states, glow pulse, flap swing)
@@ -325,9 +254,12 @@ interface DogViewProps {
   active: boolean;
   exitOpen: boolean;
   layout: Layout;
-  progress: SharedValue<number>;
-  squash: SharedValue<number>;
-  didFall: boolean;
+  /** Rows this dog fell this move (0 = no fall) + the matching tween length. */
+  fall: number;
+  fallMs: number;
+  /** Identity of the current GameState — keys the once-per-move retarget. */
+  stateRef: GameState;
+  moveClock: SharedValue<number>;
   munch: SharedValue<number>;
   wag: SharedValue<number>;
 }
@@ -337,7 +269,7 @@ interface DogViewProps {
  * component by `${dog.id}:${cells.length}` — any length change remounts.
  */
 function DogView({
-  cells, fromCells, grounded, active, exitOpen, layout, progress, squash, didFall, munch, wag,
+  cells, fromCells, grounded, active, exitOpen, layout, fall, fallMs, stateRef, moveClock, munch, wag,
 }: DogViewProps) {
   const t = layout.tile;
   const n = cells.length;
@@ -345,43 +277,65 @@ function DogView({
   const body = active ? COLORS.dogBody : COLORS.dogInactive;
   const earColor = active ? COLORS.dogEar : COLORS.dogInactiveEar;
 
-  // Pixel endpoints of the tween, precomputed so worklets capture numbers only.
-  const fxs = fromCells.map((c) => px(layout, c.x));
-  const fys = fromCells.map((c) => py(layout, c.y));
-  const txs = cells.map((c) => px(layout, c.x));
-  const tys = cells.map((c) => py(layout, c.y));
+  // Per-segment animated pixel origin (top-left), seeded at the pre-move
+  // position on mount. All interpolation below happens on the UI thread.
+  const xs = cells.map((_, i) =>
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useSharedValue(px(layout, fromCells[i].x)),
+  );
+  const ys = cells.map((_, i) =>
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useSharedValue(py(layout, fromCells[i].y)),
+  );
+  const squash = useSharedValue(1);
+
+  // Retarget once per applied state, during render — see the header note.
+  // Step: one MOVE_TWEEN_MS linear tween to the pre-fall position. Fall:
+  // sequenced single tween over the whole distance, then landing squash.
+  useMemo(() => {
+    const fallPx = fall * t;
+    for (let i = 0; i < n; i++) {
+      const tx = px(layout, cells[i].x);
+      const ty = py(layout, cells[i].y);
+      xs[i].value = withTiming(tx, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+      ys[i].value =
+        fall > 0
+          ? withSequence(
+              withTiming(ty - fallPx, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
+              withTiming(ty, { duration: fallMs, easing: Easing.in(Easing.quad) }),
+            )
+          : withTiming(ty, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+    }
+    squash.value = 1;
+    if (fall > 0) {
+      squash.value = withDelay(
+        MOVE_TWEEN_MS + fallMs,
+        withSequence(
+          withTiming(SQUASH_SCALE, { duration: SQUASH_MS, easing: Easing.out(Easing.quad) }),
+          withSpring(1, { damping: 9, stiffness: 420 }),
+        ),
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stateRef, layout]);
 
   // One derived transform per segment; reused by every pass that draws it.
-  const segTfs = cells.map((_, i) => {
-    const fx = fxs[i];
-    const fy = fys[i];
-    const tx = txs[i];
-    const ty = tys[i];
+  const segTfs = cells.map((_, i) =>
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    return useDerivedValue(() => [
-      { translateX: fx + (tx - fx) * progress.value },
-      { translateY: fy + (ty - fy) * progress.value },
-    ]);
-  });
+    useDerivedValue(() => [{ translateX: xs[i].value }, { translateY: ys[i].value }]),
+  );
 
   // One shared center point per segment for the joint bridges.
-  const centers = cells.map((_, i) => {
-    const fx = fxs[i] + half;
-    const fy = fys[i] + half;
-    const tx = txs[i] + half;
-    const ty = tys[i] + half;
+  const centers = cells.map((_, i) =>
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    return useDerivedValue(() => ({
-      x: fx + (tx - fx) * progress.value,
-      y: fy + (ty - fy) * progress.value,
-    }));
-  });
+    useDerivedValue(() => ({ x: xs[i].value + half, y: ys[i].value + half })),
+  );
 
   // Landing squash: whole-dog scale pivoted at the dog's ground line.
   const pivotPx = px(layout, (Math.min(...cells.map((c) => c.x)) + Math.max(...cells.map((c) => c.x)) + 1) / 2);
   const bottomPy = py(layout, Math.max(...cells.map((c) => c.y)) + 1);
   const dogTf = useDerivedValue(() => {
-    const s = didFall ? squash.value : 1;
+    const s = squash.value;
     return [
       { translateX: pivotPx },
       { translateY: bottomPy },
@@ -397,12 +351,10 @@ function DogView({
   const headFlip = facing === 'left' ? -1 : 1;
   const headRot = facing === 'up' ? -Math.PI / 2 : facing === 'down' ? Math.PI / 2 : 0;
   const headTf = useDerivedValue(() => {
-    const x = fxs[0] + (txs[0] - fxs[0]) * progress.value;
-    const y = fys[0] + (tys[0] - fys[0]) * progress.value;
     const pulse = active ? 1 + MUNCH_SCALE * Math.sin(Math.min(munch.value, 1) * Math.PI) : 1;
     return [
-      { translateX: x + half },
-      { translateY: y + half },
+      { translateX: xs[0].value + half },
+      { translateY: ys[0].value + half },
       { scale: pulse },
       { scaleX: headFlip },
       { rotate: headRot },
@@ -413,7 +365,7 @@ function DogView({
 
   // Floppy ear flaps while moving (and settles when still).
   const earTf = useDerivedValue(() => {
-    const a = EAR_FLAP_RADIANS * Math.sin(progress.value * Math.PI);
+    const a = EAR_FLAP_RADIANS * Math.sin(moveClock.value * Math.PI);
     return [
       { translateX: t * 0.36 },
       { translateY: t * 0.16 },
@@ -434,11 +386,9 @@ function DogView({
   const wagOn = active && exitOpen;
   const tailTf = useDerivedValue(() => {
     const a = baseTailAngle + (wagOn ? WAG_RADIANS * Math.sin(wag.value * Math.PI * 2) : 0);
-    const x = fxs[n - 1] + (txs[n - 1] - fxs[n - 1]) * progress.value;
-    const y = fys[n - 1] + (tys[n - 1] - fys[n - 1]) * progress.value;
     return [
-      { translateX: x + half },
-      { translateY: y + half },
+      { translateX: xs[n - 1].value + half },
+      { translateY: ys[n - 1].value + half },
       { rotate: a },
       { translateX: -half },
       { translateY: -half },
@@ -673,6 +623,7 @@ function Confetti({ width, height }: { width: number; height: number }) {
 export function GameCanvas({
   state,
   prevState,
+  fallRows,
   width,
   height,
   pack,
@@ -682,6 +633,7 @@ export function GameCanvas({
 }: {
   state: GameState;
   prevState: GameState | null;
+  fallRows: FallRows;
   width: number;
   height: number;
   pack: number;
@@ -691,18 +643,20 @@ export function GameCanvas({
 }) {
   const pal = PACK_PALETTES[((pack % PACK_PALETTES.length) + PACK_PALETTES.length) % PACK_PALETTES.length];
 
-  const progress = useSharedValue(1);
+  const moveClock = useSharedValue(1);
   const pulse = useSharedValue(0);
   const wag = useSharedValue(0);
   const munch = useSharedValue(1);
-  const squash = useSharedValue(1);
   const door = useSharedValue(0);
   const shake = useSharedValue(1);
 
-  useEffect(() => {
-    progress.value = 0;
-    progress.value = withTiming(1, { duration: MOVE_TWEEN_MS });
-  }, [state, progress]);
+  // Cosmetic per-move clock (ear flap). Restarted during render for the
+  // same no-flash reason as the segment retarget in DogView.
+  useMemo(() => {
+    moveClock.value = 0;
+    moveClock.value = withTiming(1, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
 
   // Ambient loops (glow pulse, wag clock) — started once.
   useEffect(() => {
@@ -716,7 +670,8 @@ export function GameCanvas({
     wag.value = withRepeat(withTiming(1, { duration: WAG_CYCLE_MS, easing: Easing.linear }), -1);
   }, [pulse, wag]);
 
-  // Event-driven juice triggers.
+  // Event-driven juice triggers (landing squash lives in DogView, timed to
+  // each dog's own fall tween).
   useEffect(() => {
     if (feedbackTick === 0) return;
     if (feedback.kind === 'dead') {
@@ -729,16 +684,6 @@ export function GameCanvas({
     if (ev.includes('ate')) {
       munch.value = 0;
       munch.value = withTiming(1, { duration: MUNCH_MS, easing: Easing.linear });
-    }
-    if (ev.includes('fell')) {
-      squash.value = 1;
-      squash.value = withDelay(
-        MOVE_TWEEN_MS,
-        withSequence(
-          withTiming(SQUASH_SCALE, { duration: SQUASH_MS, easing: Easing.out(Easing.quad) }),
-          withSpring(1, { damping: 9, stiffness: 420 }),
-        ),
-      );
     }
     if (ev.includes('spawned')) {
       door.value = 0;
@@ -764,7 +709,17 @@ export function GameCanvas({
     return { tile, ox, oy };
   }, [width, height, state.width, state.height]);
 
-  const sky = useMemo(() => buildSkyPaths(width, height, pal.decor), [width, height, pal.decor]);
+  // Static layers as recorded pictures — replayed, not re-walked, on every
+  // animated frame. Rebuilt only when the sets they draw change identity
+  // (the rules keep unchanged sets referentially stable across moves).
+  const skyPicture = useMemo(() => buildSkyPicture(width, height, pal), [width, height, pal]);
+  const boardPicture = useMemo(
+    () => buildBoardPicture(state, layout, pal, width, height),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.walls, state.spikes, state.freezeTiles, state.statues, state.snacks,
+     state.width, state.height, layout, pal, width, height],
+  );
+
   const washCells = useMemo(() => newStatueCells(state, prevState), [state, prevState]);
   const exitOpen = isExitOpen(state);
 
@@ -776,41 +731,30 @@ export function GameCanvas({
 
   return (
     <Canvas style={{ width, height }}>
-      {/* Sky: vertical gradient + per-pack decoration. */}
-      <Rect x={0} y={0} width={width} height={height}>
-        <LinearGradient start={vec(0, 0)} end={vec(0, height)} colors={[pal.skyTop, pal.skyBottom]} />
-      </Rect>
-      <SPath d={sky.alt} color={pal.decorAlt} />
-      <SPath d={sky.altBite} color={pal.skyTop} />
-      <SPath d={sky.main} color={pal.decorColor} opacity={0.92} />
+      {/* Sky: vertical gradient + per-pack decoration (static picture). */}
+      <Picture picture={skyPicture} />
 
       <Group transform={rootTf}>
-        {/* Board frame. */}
-        <RoundedRect
-          x={layout.ox - BOARD_MARGIN + 2} y={layout.oy - BOARD_MARGIN + 2}
-          width={boardW - 4} height={boardH - 4} r={12}
-          color={pal.frame} style="stroke" strokeWidth={5}
-        />
-
         <ExitDoor state={state} layout={layout} pulse={pulse} />
         <DogHouse state={state} layout={layout} door={door} />
-        <Terrain state={state} layout={layout} pal={pal} />
+
+        {/* Board frame + terrain + snacks (static picture, occludes doors). */}
+        <Picture picture={boardPicture} />
 
         {washCells.length > 0 && <StatueWash key={`wash${feedbackTick}`} cells={washCells} layout={layout} />}
 
         {state.dogs.map((dog, di) => {
           const prevDog = prevState?.dogs.find((d) => d.id === dog.id);
+          const fall = fallRows[dog.id] ?? 0;
           const shift = prevDog ? dog.cells.length - prevDog.cells.length : 0;
-          const fromCells = dog.cells.map((_, i) => {
-            if (!prevDog) return dog.cells[i];
+          const fromCells = dog.cells.map((c, i) => {
+            // A dog with no previous state (level load, fresh spawn) starts
+            // at its pre-fall position so a spawn-fall still animates.
+            if (!prevDog) return fall > 0 ? { x: c.x, y: c.y - fall } : c;
             const j = Math.min(Math.max(i - shift, 0), prevDog.cells.length - 1);
             return prevDog.cells[j];
           });
           const grounded = dog.cells.map((c) => segmentGrounded(state, c));
-          const didFall =
-            prevDog !== undefined &&
-            prevDog.cells.length === dog.cells.length &&
-            dog.cells.every((c, i) => c.y - prevDog.cells[i].y >= 1);
           return (
             <DogView
               key={`${dog.id}:${dog.cells.length}`}
@@ -820,9 +764,10 @@ export function GameCanvas({
               active={di === state.activeDog}
               exitOpen={exitOpen}
               layout={layout}
-              progress={progress}
-              squash={squash}
-              didFall={didFall}
+              fall={fall}
+              fallMs={fallDurationMs(fall)}
+              stateRef={state}
+              moveClock={moveClock}
               munch={munch}
               wag={wag}
             />
