@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
 import {
+  GROW_TWEEN_MS,
   HAPTICS_ENABLED,
   HINT_MAX_STATES,
   HINT_MOVES,
@@ -111,8 +112,10 @@ export default function GameScreen() {
         buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
       } else if (ev.includes('fell')) {
         // Play the thud when the fall tween actually lands, not at move time.
+        // An eating move inserts the tail-grow phase before the fall starts.
         const rows = Object.values(useGameStore.getState().fallRows);
-        const landAt = MOVE_TWEEN_MS + fallDurationMs(rows.length ? Math.max(...rows) : 0);
+        const growMs = ev.includes('ate') ? GROW_TWEEN_MS : 0;
+        const landAt = MOVE_TWEEN_MS + growMs + fallDurationMs(rows.length ? Math.max(...rows) : 0);
         const landTimer = setTimeout(() => playSfx('land', soundEnabled), landAt);
         return () => clearTimeout(landTimer);
       }

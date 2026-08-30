@@ -6,6 +6,10 @@ export const SPAWN_DOG_LENGTH = 3;
 /** Snap-to-tile movement tween duration (ms). Presentational only. */
 export const MOVE_TWEEN_MS = 80;
 
+/** Second phase of an eating move: the new segment growing back out at the
+ *  tail after the whole body visibly steps forward (ms). Presentational. */
+export const GROW_TWEEN_MS = 100;
+
 /** Gravity fall tween: ms per row fallen, clamped to [min, max]. */
 export const FALL_MS_PER_ROW = 70;
 export const FALL_MIN_MS = 90;

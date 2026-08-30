@@ -55,6 +55,7 @@ import {
   DUST_COUNT,
   EAR_FLAP_RADIANS,
   EXIT_PULSE_MS,
+  GROW_TWEEN_MS,
   MOVE_TWEEN_MS,
   MUNCH_MS,
   MUNCH_SCALE,
@@ -251,6 +252,8 @@ interface DogViewProps {
   cells: readonly Cell[];
   fromCells: readonly Cell[];
   grounded: readonly boolean[];
+  /** This state gained a segment (ate a bone) — animate the two-phase grow. */
+  grew: boolean;
   active: boolean;
   exitOpen: boolean;
   layout: Layout;
@@ -269,7 +272,7 @@ interface DogViewProps {
  * component by `${dog.id}:${cells.length}` — any length change remounts.
  */
 function DogView({
-  cells, fromCells, grounded, active, exitOpen, layout, fall, fallMs, stateRef, moveClock, munch, wag,
+  cells, fromCells, grounded, grew, active, exitOpen, layout, fall, fallMs, stateRef, moveClock, munch, wag,
 }: DogViewProps) {
   const t = layout.tile;
   const n = cells.length;
@@ -290,26 +293,46 @@ function DogView({
   const squash = useSharedValue(1);
 
   // Retarget once per applied state, during render — see the header note.
-  // Step: one MOVE_TWEEN_MS linear tween to the pre-fall position. Fall:
-  // sequenced single tween over the whole distance, then landing squash.
+  // Step: one MOVE_TWEEN_MS linear tween to the pre-fall position. On a
+  // grow move the whole body first takes a visible full step (the new tail
+  // segment follows the segment ahead of it, so the old tail cell empties
+  // like a normal move), then the extra segment slides back out at the
+  // tail over GROW_TWEEN_MS. Fall: sequenced single tween over the whole
+  // distance, then landing squash.
   useMemo(() => {
     const fallPx = fall * t;
+    const growMs = grew ? GROW_TWEEN_MS : 0;
     for (let i = 0; i < n; i++) {
       const tx = px(layout, cells[i].x);
       const ty = py(layout, cells[i].y);
-      xs[i].value = withTiming(tx, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
-      ys[i].value =
-        fall > 0
-          ? withSequence(
-              withTiming(ty - fallPx, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
-              withTiming(ty, { duration: fallMs, easing: Easing.in(Easing.quad) }),
-            )
-          : withTiming(ty, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+      const isNewTail = grew && i === n - 1;
+      const stepX = isNewTail ? px(layout, cells[i - 1].x) : tx;
+      const stepY = isNewTail ? py(layout, cells[i - 1].y) : ty;
+
+      xs[i].value = grew
+        ? withSequence(
+            withTiming(stepX, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
+            withTiming(tx, { duration: GROW_TWEEN_MS, easing: Easing.out(Easing.quad) }),
+          )
+        : withTiming(tx, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+
+      const yPhases = [
+        withTiming(stepY - fallPx, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
+      ];
+      if (grew) {
+        yPhases.push(
+          withTiming(ty - fallPx, { duration: GROW_TWEEN_MS, easing: Easing.out(Easing.quad) }),
+        );
+      }
+      if (fall > 0) {
+        yPhases.push(withTiming(ty, { duration: fallMs, easing: Easing.in(Easing.quad) }));
+      }
+      ys[i].value = yPhases.length > 1 ? withSequence(...yPhases) : yPhases[0];
     }
     squash.value = 1;
     if (fall > 0) {
       squash.value = withDelay(
-        MOVE_TWEEN_MS + fallMs,
+        MOVE_TWEEN_MS + growMs + fallMs,
         withSequence(
           withTiming(SQUASH_SCALE, { duration: SQUASH_MS, easing: Easing.out(Easing.quad) }),
           withSpring(1, { damping: 9, stiffness: 420 }),
@@ -757,12 +780,14 @@ export function GameCanvas({
             return prevDog.cells[j];
           });
           const grounded = dog.cells.map((c) => segmentGrounded(state, c));
+          const grew = prevDog !== undefined && dog.cells.length > prevDog.cells.length;
           return (
             <DogView
               key={`${dog.id}:${dog.cells.length}`}
               cells={dog.cells}
               fromCells={fromCells}
               grounded={grounded}
+              grew={grew}
               active={di === state.activeDog}
               exitOpen={exitOpen}
               layout={layout}
