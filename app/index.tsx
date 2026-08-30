@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { LEVELS } from '../src/game/levels';
 import { furthestUnlockedIndex, totalStars, useProgressStore } from '../src/store/progressStore';
+import { HowToPlayModal } from '../src/ui/HowToPlayModal';
 
 function MenuButton({
   label,
@@ -37,6 +38,7 @@ function MenuButton({
 export default function Home() {
   const router = useRouter();
   const stars = useProgressStore((s) => s.stars);
+  const [helpVisible, setHelpVisible] = useState(false);
 
   const continueIndex = furthestUnlockedIndex(stars);
   const continueLevel = LEVELS[continueIndex];
@@ -44,6 +46,13 @@ export default function Home() {
 
   return (
     <SafeAreaView style={styles.screen}>
+      <Pressable
+        onPress={() => setHelpVisible(true)}
+        hitSlop={8}
+        style={({ pressed }) => [styles.helpButton, pressed && styles.helpButtonPressed]}
+      >
+        <Text style={styles.helpLabel}>?</Text>
+      </Pressable>
       <View style={styles.hero}>
         <Text style={styles.title}>Long Dog</Text>
         <Text style={styles.subtitle}>a very long dachshund puzzle</Text>
@@ -59,12 +68,27 @@ export default function Home() {
         <MenuButton label="Level Select" onPress={() => router.push('/levels')} />
         <MenuButton label="Settings" onPress={() => router.push('/settings')} />
       </View>
+      <HowToPlayModal visible={helpVisible} onClose={() => setHelpVisible(false)} />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#8ED1F4' },
+  helpButton: {
+    position: 'absolute',
+    top: 54,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#3B2A1A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  helpButtonPressed: { backgroundColor: '#5C4326' },
+  helpLabel: { color: '#F6E7B2', fontSize: 20, fontWeight: '900' },
   hero: { alignItems: 'center', marginTop: 48 },
   title: { fontSize: 44, fontWeight: '900', color: '#3B2A1A' },
   subtitle: { fontSize: 15, color: '#4A362A', marginTop: 4 },
