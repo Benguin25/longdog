@@ -18,10 +18,10 @@ type Page = {
 
 const PAGES: Page[] = [
   {
-    emoji: '🌭',
+    emoji: '🦴',
     title: 'The Goal',
     lines: [
-      'Eat every snack on the level to open the glowing dog door.',
+      'Eat every bone on the level. Once they’re all eaten, the dog door (the arched doorway) lights up and opens.',
       'Then get your dog’s head into the open door to clear the level.',
     ],
   },
@@ -38,14 +38,14 @@ const PAGES: Page[] = [
     title: 'Gravity',
     lines: [
       'After every move, your dog falls unless some part of its body rests on ground, a statue, or another dog.',
-      'Falling off the bottom of the level — or touching spikes — is fatal. Don’t worry: the move is undone automatically.',
+      'Falling off the bottom of the level — or touching the spiky garden rakes — is fatal. Don’t worry: the move is undone automatically.',
     ],
   },
   {
-    emoji: '🦴',
+    emoji: '🐕',
     title: 'A Very Long Dog',
     lines: [
-      'Every snack you eat makes your dog one segment longer.',
+      'Every bone you eat makes your dog one segment longer.',
       'Your body is a platform you can stand on — and an obstacle in your way. Length is both your tool and your problem.',
     ],
   },
@@ -53,8 +53,8 @@ const PAGES: Page[] = [
     emoji: '🗿',
     title: 'Playing Dead',
     lines: [
-      'Step your head onto a “play dead” tile and your whole dog turns to stone, exactly in the shape it held.',
-      'A fresh dog pops out of the dog house. Statues make great stairs and bridges — the shape you freeze in is the puzzle.',
+      'Step your head onto a “play dead” mat and your whole dog turns to stone, exactly in the shape it held.',
+      'A fresh dog pops out of the dog house (the little roofed hut). Statues make great stairs and bridges — the shape you freeze in is the puzzle.',
     ],
   },
   {

@@ -746,12 +746,14 @@ export function GameCanvas({
         {state.dogs.map((dog, di) => {
           const prevDog = prevState?.dogs.find((d) => d.id === dog.id);
           const fall = fallRows[dog.id] ?? 0;
-          const shift = prevDog ? dog.cells.length - prevDog.cells.length : 0;
           const fromCells = dog.cells.map((c, i) => {
             // A dog with no previous state (level load, fresh spawn) starts
             // at its pre-fall position so a spawn-fall still animates.
             if (!prevDog) return fall > 0 ? { x: c.x, y: c.y - fall } : c;
-            const j = Math.min(Math.max(i - shift, 0), prevDog.cells.length - 1);
+            // Same-index mapping makes a grow move read like a normal step:
+            // every segment slides one tile forward while the new tail
+            // segment starts on (and stays at) the old tail cell.
+            const j = Math.min(i, prevDog.cells.length - 1);
             return prevDog.cells[j];
           });
           const grounded = dog.cells.map((c) => segmentGrounded(state, c));
