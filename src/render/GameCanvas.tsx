@@ -10,6 +10,10 @@
 // - Each dog segment owns an animated pixel position that is retargeted
 //   once per move DURING RENDER (not in an effect — an effect restart
 //   would commit one frame at the final pose first, a visible flash).
+//   A dog that ate remounts (hook counts depend on length) and animations
+//   started during a mount render can be dropped, freezing the dog
+//   mid-tween — so a mount-only effect re-kicks the same targets after
+//   commit (idempotent; withTiming retargets from the current value).
 //   The step is a single MOVE_TWEEN_MS linear withTiming; a gravity fall
 //   is sequenced after it as ONE continuous tween over the whole fall
 //   distance (duration scaled by rows, ease-in, squash on landing) using
@@ -55,6 +59,7 @@ import {
   DUST_COUNT,
   EAR_FLAP_RADIANS,
   EXIT_PULSE_MS,
+  GROW_TWEEN_MS,
   MOVE_TWEEN_MS,
   MUNCH_MS,
   MUNCH_SCALE,
@@ -251,6 +256,8 @@ interface DogViewProps {
   cells: readonly Cell[];
   fromCells: readonly Cell[];
   grounded: readonly boolean[];
+  /** This state gained a segment (ate a bone) — animate the two-phase grow. */
+  grew: boolean;
   active: boolean;
   exitOpen: boolean;
   layout: Layout;
@@ -269,7 +276,7 @@ interface DogViewProps {
  * component by `${dog.id}:${cells.length}` — any length change remounts.
  */
 function DogView({
-  cells, fromCells, grounded, active, exitOpen, layout, fall, fallMs, stateRef, moveClock, munch, wag,
+  cells, fromCells, grounded, grew, active, exitOpen, layout, fall, fallMs, stateRef, moveClock, munch, wag,
 }: DogViewProps) {
   const t = layout.tile;
   const n = cells.length;
@@ -289,10 +296,17 @@ function DogView({
   );
   const squash = useSharedValue(1);
 
-  // Retarget once per applied state, during render — see the header note.
-  // Step: one MOVE_TWEEN_MS linear tween to the pre-fall position. Fall:
-  // sequenced single tween over the whole distance, then landing squash.
-  useMemo(() => {
+  // On an eating move the body takes its normal one-tile step while the
+  // new tail segment (seeded at the old tail cell, its final position)
+  // inflates into place — no sequenced multi-phase movement.
+  const tailPop = useSharedValue(grew ? 0 : 1);
+
+  // Retarget every segment to the current state's targets. Runs during
+  // render for in-place updates (see the header note), and once more after
+  // commit for the remount that follows an eat, whose render-phase
+  // animation starts can be dropped. Both runs aim at the same targets, so
+  // the double start is harmless.
+  const retarget = () => {
     const fallPx = fall * t;
     for (let i = 0; i < n; i++) {
       const tx = px(layout, cells[i].x);
@@ -316,13 +330,30 @@ function DogView({
         ),
       );
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stateRef, layout]);
+    if (grew) {
+      tailPop.value = 0;
+      tailPop.value = withTiming(1, { duration: GROW_TWEEN_MS, easing: Easing.out(Easing.quad) });
+    }
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useMemo(retarget, [stateRef, layout]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(retarget, []);
 
   // One derived transform per segment; reused by every pass that draws it.
+  // The last segment carries the grow pop scale (1 except while inflating).
   const segTfs = cells.map((_, i) =>
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    useDerivedValue(() => [{ translateX: xs[i].value }, { translateY: ys[i].value }]),
+    useDerivedValue(() => {
+      const p = i === n - 1 ? tailPop.value : 1;
+      return [
+        { translateX: xs[i].value + half },
+        { translateY: ys[i].value + half },
+        { scale: p },
+        { translateX: -half },
+        { translateY: -half },
+      ];
+    }),
   );
 
   // One shared center point per segment for the joint bridges.
@@ -389,6 +420,7 @@ function DogView({
     return [
       { translateX: xs[n - 1].value + half },
       { translateY: ys[n - 1].value + half },
+      { scale: tailPop.value },
       { rotate: a },
       { translateX: -half },
       { translateY: -half },
@@ -746,21 +778,25 @@ export function GameCanvas({
         {state.dogs.map((dog, di) => {
           const prevDog = prevState?.dogs.find((d) => d.id === dog.id);
           const fall = fallRows[dog.id] ?? 0;
-          const shift = prevDog ? dog.cells.length - prevDog.cells.length : 0;
           const fromCells = dog.cells.map((c, i) => {
             // A dog with no previous state (level load, fresh spawn) starts
             // at its pre-fall position so a spawn-fall still animates.
             if (!prevDog) return fall > 0 ? { x: c.x, y: c.y - fall } : c;
-            const j = Math.min(Math.max(i - shift, 0), prevDog.cells.length - 1);
+            // Same-index mapping makes a grow move read like a normal step:
+            // every segment slides one tile forward while the new tail
+            // segment starts on (and stays at) the old tail cell.
+            const j = Math.min(i, prevDog.cells.length - 1);
             return prevDog.cells[j];
           });
           const grounded = dog.cells.map((c) => segmentGrounded(state, c));
+          const grew = prevDog !== undefined && dog.cells.length > prevDog.cells.length;
           return (
             <DogView
               key={`${dog.id}:${dog.cells.length}`}
               cells={dog.cells}
               fromCells={fromCells}
               grounded={grounded}
+              grew={grew}
               active={di === state.activeDog}
               exitOpen={exitOpen}
               layout={layout}

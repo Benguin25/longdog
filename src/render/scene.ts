@@ -232,45 +232,30 @@ export function buildFreezePaths(freezeTiles: ReadonlySet<string>, l: Layout): F
 }
 
 // ---------------------------------------------------------------------------
-// Snacks: bones + sausages (alternating deterministically per cell)
+// Snacks: bones (all snacks are bones)
 // ---------------------------------------------------------------------------
 
 export interface SnackPaths {
   bone: string;
   boneOutline: string;
-  sausage: string;
-  sausageShine: string;
-  sausageTie: string;
 }
 
 export function buildSnackPaths(snacks: readonly Cell[], l: Layout): SnackPaths {
   const t = l.tile;
   let bone = '';
-  let sausage = '';
-  let sausageShine = '';
-  let sausageTie = '';
 
   for (const s of snacks) {
     const cx = px(l, s.x) + t / 2;
     const cy = py(l, s.y) + t / 2;
-    if ((s.x + s.y) % 2 === 0) {
-      // Bone: bar + four knobs.
-      bone += rrect(cx - t * 0.24, cy - t * 0.09, t * 0.48, t * 0.18, t * 0.09);
-      for (const side of [-1, 1]) {
-        bone += circ(cx + side * t * 0.24, cy - t * 0.09, t * 0.115);
-        bone += circ(cx + side * t * 0.24, cy + t * 0.09, t * 0.115);
-      }
-    } else {
-      // Sausage link: two plump capsules with a tie in the middle.
-      sausage += rrect(cx - t * 0.34, cy - t * 0.13, t * 0.32, t * 0.27, t * 0.135);
-      sausage += rrect(cx + t * 0.02, cy - t * 0.13, t * 0.32, t * 0.27, t * 0.135);
-      sausageShine += rrect(cx - t * 0.28, cy - t * 0.08, t * 0.16, t * 0.07, t * 0.035);
-      sausageShine += rrect(cx + t * 0.08, cy - t * 0.08, t * 0.16, t * 0.07, t * 0.035);
-      sausageTie += circ(cx, cy, t * 0.05);
+    // Bone: bar + four knobs.
+    bone += rrect(cx - t * 0.24, cy - t * 0.09, t * 0.48, t * 0.18, t * 0.09);
+    for (const side of [-1, 1]) {
+      bone += circ(cx + side * t * 0.24, cy - t * 0.09, t * 0.115);
+      bone += circ(cx + side * t * 0.24, cy + t * 0.09, t * 0.115);
     }
   }
 
-  return { bone, boneOutline: bone, sausage, sausageShine, sausageTie };
+  return { bone, boneOutline: bone };
 }
 
 // ---------------------------------------------------------------------------

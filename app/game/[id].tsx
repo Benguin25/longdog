@@ -27,6 +27,7 @@ import { useGameStore } from '../../src/store/gameStore';
 import { useProgressStore } from '../../src/store/progressStore';
 import { DPad } from '../../src/ui/DPad';
 import { FpsOverlay } from '../../src/ui/FpsOverlay';
+import { HowToPlayModal } from '../../src/ui/HowToPlayModal';
 import { HudButton } from '../../src/ui/HudButton';
 
 const HINT_ARROW: Record<Action, string> = {
@@ -61,6 +62,7 @@ export default function GameScreen() {
   const [board, setBoard] = useState({ w: 0, h: 0 });
   const [deadFlash, setDeadFlash] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  const [helpVisible, setHelpVisible] = useState(false);
 
   const buzz = useCallback(
     (fn: () => Promise<unknown>) => {
@@ -192,6 +194,7 @@ export default function GameScreen() {
           </Text>
         </View>
         <View style={styles.hudRight}>
+          <HudButton label="?" onPress={() => setHelpVisible(true)} />
           <HudButton label="Undo" onPress={undo} disabled={moveCount === 0} />
         </View>
       </View>
@@ -240,6 +243,8 @@ export default function GameScreen() {
         <View style={styles.sideButtons} />
       </View>
 
+      <HowToPlayModal visible={helpVisible} onClose={() => setHelpVisible(false)} />
+
       {won && (
         <View style={styles.overlay} pointerEvents="none">
           <View style={styles.clearCard}>
@@ -261,7 +266,7 @@ const styles = StyleSheet.create({
     paddingTop: 6,
   },
   hudCenter: { alignItems: 'center', flex: 1 },
-  hudRight: { flexDirection: 'row' },
+  hudRight: { flexDirection: 'row', gap: 8 },
   header: { fontSize: 18, fontWeight: '800', color: '#3B2A1A' },
   counter: { fontSize: 13, color: '#4A362A', marginTop: 2 },
   board: { flex: 1, marginVertical: 6 },

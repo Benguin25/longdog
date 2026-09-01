@@ -6,6 +6,10 @@ export const SPAWN_DOG_LENGTH = 3;
 /** Snap-to-tile movement tween duration (ms). Presentational only. */
 export const MOVE_TWEEN_MS = 80;
 
+/** Eating move: how long the new tail segment takes to inflate into place
+ *  while the body takes its normal step (ms). Presentational only. */
+export const GROW_TWEEN_MS = 100;
+
 /** Gravity fall tween: ms per row fallen, clamped to [min, max]. */
 export const FALL_MS_PER_ROW = 70;
 export const FALL_MIN_MS = 90;
@@ -169,11 +173,8 @@ export const COLORS = {
   tongue: '#F27D93',
   blush: '#E8935F',
 
-  // Snacks: bones + sausages.
+  // Snacks: bones.
   bone: '#F9EFC8',
-  sausage: '#C25441',
-  sausageShine: '#DE7B60',
-  sausageTie: '#8F3A2C',
 
   // Garden rake spikes.
   rakeMetal: '#97A4B0',

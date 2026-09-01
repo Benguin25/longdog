@@ -78,7 +78,7 @@ function buildScene(state: GameState, layout: Layout): number {
   return (
     walls.dirt.length + walls.outline.length + walls.grass.length + walls.speckles.length +
     walls.blades.length + rakes.outline.length + mats.outline.length + statues.outline.length +
-    snacks.bone.length + snacks.sausage.length + sky.main.length + grounded.length
+    snacks.bone.length + sky.main.length + grounded.length
   );
 }
 
