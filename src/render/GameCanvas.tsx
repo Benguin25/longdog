@@ -10,6 +10,10 @@
 // - Each dog segment owns an animated pixel position that is retargeted
 //   once per move DURING RENDER (not in an effect — an effect restart
 //   would commit one frame at the final pose first, a visible flash).
+//   A dog that ate remounts (hook counts depend on length) and animations
+//   started during a mount render can be dropped, freezing the dog
+//   mid-tween — so a mount-only effect re-kicks the same targets after
+//   commit (idempotent; withTiming retargets from the current value).
 //   The step is a single MOVE_TWEEN_MS linear withTiming; a gravity fall
 //   is sequenced after it as ONE continuous tween over the whole fall
 //   distance (duration scaled by rows, ease-in, squash on landing) using
@@ -292,60 +296,64 @@ function DogView({
   );
   const squash = useSharedValue(1);
 
-  // Retarget once per applied state, during render — see the header note.
-  // Step: one MOVE_TWEEN_MS linear tween to the pre-fall position. On a
-  // grow move the whole body first takes a visible full step (the new tail
-  // segment follows the segment ahead of it, so the old tail cell empties
-  // like a normal move), then the extra segment slides back out at the
-  // tail over GROW_TWEEN_MS. Fall: sequenced single tween over the whole
-  // distance, then landing squash.
-  useMemo(() => {
+  // On an eating move the body takes its normal one-tile step while the
+  // new tail segment (seeded at the old tail cell, its final position)
+  // inflates into place — no sequenced multi-phase movement.
+  const tailPop = useSharedValue(grew ? 0 : 1);
+
+  // Retarget every segment to the current state's targets. Runs during
+  // render for in-place updates (see the header note), and once more after
+  // commit for the remount that follows an eat, whose render-phase
+  // animation starts can be dropped. Both runs aim at the same targets, so
+  // the double start is harmless.
+  const retarget = () => {
     const fallPx = fall * t;
-    const growMs = grew ? GROW_TWEEN_MS : 0;
     for (let i = 0; i < n; i++) {
       const tx = px(layout, cells[i].x);
       const ty = py(layout, cells[i].y);
-      const isNewTail = grew && i === n - 1;
-      const stepX = isNewTail ? px(layout, cells[i - 1].x) : tx;
-      const stepY = isNewTail ? py(layout, cells[i - 1].y) : ty;
-
-      xs[i].value = grew
-        ? withSequence(
-            withTiming(stepX, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
-            withTiming(tx, { duration: GROW_TWEEN_MS, easing: Easing.out(Easing.quad) }),
-          )
-        : withTiming(tx, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
-
-      const yPhases = [
-        withTiming(stepY - fallPx, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
-      ];
-      if (grew) {
-        yPhases.push(
-          withTiming(ty - fallPx, { duration: GROW_TWEEN_MS, easing: Easing.out(Easing.quad) }),
-        );
-      }
-      if (fall > 0) {
-        yPhases.push(withTiming(ty, { duration: fallMs, easing: Easing.in(Easing.quad) }));
-      }
-      ys[i].value = yPhases.length > 1 ? withSequence(...yPhases) : yPhases[0];
+      xs[i].value = withTiming(tx, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+      ys[i].value =
+        fall > 0
+          ? withSequence(
+              withTiming(ty - fallPx, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
+              withTiming(ty, { duration: fallMs, easing: Easing.in(Easing.quad) }),
+            )
+          : withTiming(ty, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
     }
     squash.value = 1;
     if (fall > 0) {
       squash.value = withDelay(
-        MOVE_TWEEN_MS + growMs + fallMs,
+        MOVE_TWEEN_MS + fallMs,
         withSequence(
           withTiming(SQUASH_SCALE, { duration: SQUASH_MS, easing: Easing.out(Easing.quad) }),
           withSpring(1, { damping: 9, stiffness: 420 }),
         ),
       );
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stateRef, layout]);
+    if (grew) {
+      tailPop.value = 0;
+      tailPop.value = withTiming(1, { duration: GROW_TWEEN_MS, easing: Easing.out(Easing.quad) });
+    }
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useMemo(retarget, [stateRef, layout]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(retarget, []);
 
   // One derived transform per segment; reused by every pass that draws it.
+  // The last segment carries the grow pop scale (1 except while inflating).
   const segTfs = cells.map((_, i) =>
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    useDerivedValue(() => [{ translateX: xs[i].value }, { translateY: ys[i].value }]),
+    useDerivedValue(() => {
+      const p = i === n - 1 ? tailPop.value : 1;
+      return [
+        { translateX: xs[i].value + half },
+        { translateY: ys[i].value + half },
+        { scale: p },
+        { translateX: -half },
+        { translateY: -half },
+      ];
+    }),
   );
 
   // One shared center point per segment for the joint bridges.
@@ -412,6 +420,7 @@ function DogView({
     return [
       { translateX: xs[n - 1].value + half },
       { translateY: ys[n - 1].value + half },
+      { scale: tailPop.value },
       { rotate: a },
       { translateX: -half },
       { translateY: -half },
