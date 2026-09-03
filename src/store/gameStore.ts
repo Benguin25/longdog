@@ -41,6 +41,7 @@ interface GameStore {
   exited: Dog | null;
 
   loadLevel: (id: string) => void;
+  loadLevelData: (level: LevelData) => void;
   dispatch: (action: Action) => void;
   undo: () => void;
   reset: () => void;
@@ -62,6 +63,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   loadLevel: (id) => {
     const level = levelById(id);
     if (!level) return;
+    get().loadLevelData(level);
+  },
+
+  loadLevelData: (level) => {
     set({
       level,
       state: parseLevel(level),

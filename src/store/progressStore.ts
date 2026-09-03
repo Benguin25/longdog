@@ -13,12 +13,18 @@ interface ProgressStore {
   stars: Record<string, number>;
   soundEnabled: boolean;
   hapticsEnabled: boolean;
+  /** True once the first-launch "play the tutorial?" prompt has been shown. */
+  tutorialPrompted: boolean;
+  /** True once the player has finished all five tutorial lessons. */
+  tutorialDone: boolean;
   /** True once AsyncStorage rehydration finished (gates lock rendering). */
   hydrated: boolean;
 
   recordClear: (levelId: string, stars: number) => void;
   setSoundEnabled: (v: boolean) => void;
   setHapticsEnabled: (v: boolean) => void;
+  setTutorialPrompted: (v: boolean) => void;
+  setTutorialDone: (v: boolean) => void;
   setHydrated: (v: boolean) => void;
   resetProgress: () => void;
 }
@@ -29,6 +35,8 @@ export const useProgressStore = create<ProgressStore>()(
       stars: {},
       soundEnabled: true,
       hapticsEnabled: true,
+      tutorialPrompted: false,
+      tutorialDone: false,
       hydrated: false,
 
       recordClear: (levelId, s) =>
@@ -37,8 +45,10 @@ export const useProgressStore = create<ProgressStore>()(
         })),
       setSoundEnabled: (v) => set({ soundEnabled: v }),
       setHapticsEnabled: (v) => set({ hapticsEnabled: v }),
+      setTutorialPrompted: (v) => set({ tutorialPrompted: v }),
+      setTutorialDone: (v) => set({ tutorialDone: v }),
       setHydrated: (v) => set({ hydrated: v }),
-      resetProgress: () => set({ stars: {} }),
+      resetProgress: () => set({ stars: {}, tutorialPrompted: false, tutorialDone: false }),
     }),
     {
       name: 'longdog-progress',
@@ -47,6 +57,8 @@ export const useProgressStore = create<ProgressStore>()(
         stars: s.stars,
         soundEnabled: s.soundEnabled,
         hapticsEnabled: s.hapticsEnabled,
+        tutorialPrompted: s.tutorialPrompted,
+        tutorialDone: s.tutorialDone,
       }),
       onRehydrateStorage: () => () => {
         useProgressStore.getState().setHydrated(true);
