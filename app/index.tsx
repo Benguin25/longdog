@@ -68,7 +68,11 @@ export default function Home() {
         <MenuButton label="Level Select" onPress={() => router.push('/levels')} />
         <MenuButton label="Settings" onPress={() => router.push('/settings')} />
       </View>
-      <HowToPlayModal visible={helpVisible} onClose={() => setHelpVisible(false)} />
+      <HowToPlayModal
+        visible={helpVisible}
+        onClose={() => setHelpVisible(false)}
+        onPlayTutorial={() => router.push('/tutorial/1')}
+      />
     </SafeAreaView>
   );
 }

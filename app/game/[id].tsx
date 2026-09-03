@@ -279,7 +279,11 @@ export default function GameScreen() {
         <View style={styles.sideButtons} />
       </View>
 
-      <HowToPlayModal visible={helpVisible} onClose={() => setHelpVisible(false)} />
+      <HowToPlayModal
+        visible={helpVisible}
+        onClose={() => setHelpVisible(false)}
+        onPlayTutorial={() => router.push('/tutorial/1')}
+      />
 
       {showClear && (
         <View style={styles.overlay} pointerEvents="none">
