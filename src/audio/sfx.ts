@@ -3,20 +3,25 @@
 // never touches game state. Callers gate on the Sound setting themselves
 // via the `enabled` argument so this module stays store-free.
 
-import { Audio, type AVPlaybackSource } from 'expo-av';
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  type AudioPlayer,
+  type AudioSource,
+} from 'expo-audio';
 
 const SOURCES = {
-  crunch: require('../../assets/sounds/crunch.wav') as AVPlaybackSource,
-  yelp: require('../../assets/sounds/yelp.wav') as AVPlaybackSource,
-  crack: require('../../assets/sounds/crack.wav') as AVPlaybackSource,
-  bark: require('../../assets/sounds/bark.wav') as AVPlaybackSource,
-  land: require('../../assets/sounds/land.wav') as AVPlaybackSource,
-  door: require('../../assets/sounds/door.wav') as AVPlaybackSource,
+  crunch: require('../../assets/sounds/crunch.wav') as AudioSource,
+  yelp: require('../../assets/sounds/yelp.wav') as AudioSource,
+  crack: require('../../assets/sounds/crack.wav') as AudioSource,
+  bark: require('../../assets/sounds/bark.wav') as AudioSource,
+  land: require('../../assets/sounds/land.wav') as AudioSource,
+  door: require('../../assets/sounds/door.wav') as AudioSource,
 } as const;
 
 export type SfxKey = keyof typeof SOURCES;
 
-const sounds = new Map<SfxKey, Audio.Sound>();
+const players = new Map<SfxKey, AudioPlayer>();
 let loading: Promise<void> | null = null;
 let generation = 0;
 
@@ -25,23 +30,22 @@ export function initSfx(): Promise<void> {
   if (loading) return loading;
   const gen = generation;
   loading = (async () => {
-    await Audio.setAudioModeAsync({
-      playsInSilentModeIOS: false,
-      shouldDuckAndroid: true,
-      staysActiveInBackground: false,
+    await setAudioModeAsync({
+      playsInSilentMode: false,
+      interruptionMode: 'duckOthers',
+      shouldPlayInBackground: false,
     }).catch(() => {});
-    await Promise.all(
-      (Object.keys(SOURCES) as SfxKey[]).map(async (key) => {
-        try {
-          const { sound } = await Audio.Sound.createAsync(SOURCES[key], { shouldPlay: false });
-          // If unloadSfx ran while this was loading, don't leak the player.
-          if (gen === generation) sounds.set(key, sound);
-          else await sound.unloadAsync().catch(() => {});
-        } catch {
-          // Missing/failed sound is never fatal — the game plays silently.
-        }
-      }),
-    );
+    for (const key of Object.keys(SOURCES) as SfxKey[]) {
+      if (gen !== generation) return;
+      try {
+        const player = createAudioPlayer(SOURCES[key]);
+        // If unloadSfx ran while this was loading, don't leak the player.
+        if (gen === generation) players.set(key, player);
+        else player.remove();
+      } catch {
+        // Missing/failed sound is never fatal — the game plays silently.
+      }
+    }
   })();
   return loading;
 }
@@ -49,9 +53,10 @@ export function initSfx(): Promise<void> {
 /** Fire-and-forget playback (restarts the sample if already playing). */
 export function playSfx(key: SfxKey, enabled: boolean): void {
   if (!enabled) return;
-  const sound = sounds.get(key);
-  if (sound) {
-    sound.replayAsync().catch(() => {});
+  const player = players.get(key);
+  if (player) {
+    player.seekTo(0).catch(() => {});
+    player.play();
   } else {
     // Not loaded yet — kick off loading so later plays work.
     void initSfx();
@@ -61,8 +66,14 @@ export function playSfx(key: SfxKey, enabled: boolean): void {
 /** Release native players (call when leaving the game). */
 export async function unloadSfx(): Promise<void> {
   generation += 1;
-  const all = [...sounds.values()];
-  sounds.clear();
+  const all = [...players.values()];
+  players.clear();
   loading = null;
-  await Promise.all(all.map((s) => s.unloadAsync().catch(() => {})));
+  for (const player of all) {
+    try {
+      player.remove();
+    } catch {
+      // ignore
+    }
+  }
 }

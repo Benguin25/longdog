@@ -26,7 +26,14 @@
           "imageWidth": 76
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
