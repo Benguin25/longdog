@@ -2,8 +2,10 @@
 
 ## Concept
 A dachshund on a 2D grid moves one tile at a time (4 directions). Eating a snack makes it
-one segment longer. Gravity applies: after each move the dog falls unless any segment is
-resting on a wall, a statue, or another dog. The exit (a glowing dog door) opens once all
+one segment longer. Only the head eats: by moving onto a snack, or by falling onto one
+(a falling head with a snack directly beneath it eats it and the fall continues; the body
+passes over snacks without eating them). Gravity applies: after each move the dog falls
+unless any segment is resting on a wall, a statue, or another dog. The exit (a glowing dog door) opens once all
 snacks on the level are eaten; getting the head into the open exit clears the dog.
 Falling off the bottom of the level or landing on spikes is death (auto-undo with feedback).
 The dog's own body is a platform and an obstacle: length is both your resource and your

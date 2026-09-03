@@ -41,7 +41,7 @@
     ]
   ],
   "spawnDir": "right",
-  "par": 23,
+  "par": 22,
   "mechanics": [
     "freeze",
     "two-dogs"

@@ -7,13 +7,18 @@
 // Rules implemented (full SPEC.md ruleset):
 // - 4-direction movement of the active dog's head, body follows.
 // - Blocking: grid bounds, walls, statues, own body, other dogs.
-// - Snacks: head moving onto a snack eats it and grows the dog by one
-//   segment (tail stays put). Snacks never block and never support; a dog
-//   that falls through/onto a snack cell overlaps it without eating it —
-//   only a deliberate head move eats.
+// - Snacks: the HEAD entering a snack cell eats it and grows the dog by one
+//   segment (tail stays put). This applies both to a deliberate move and to
+//   gravity: a falling dog whose head lands on a snack eats it. Snacks
+//   never block and never support; body segments fall through/over snack
+//   cells without eating them (only the head eats).
 // - Gravity: after every action, any dog with no segment resting on a wall
 //   or statue falls. Dogs support each other (transitively). Unsupported
-//   dogs fall together, one row at a time.
+//   dogs fall together, one row at a time. A falling head with a snack
+//   directly beneath it eats it on that row exactly like an eating move:
+//   the head advances onto the snack and the rest of the body stays put
+//   (so it keeps supporting anything resting on it that row); the fall then
+//   continues as normal. A fall can eat several snacks in a row.
 // - Death: any segment overlapping a spike cell, or falling below the grid.
 //   Death never returns a state — the caller keeps the pre-move state
 //   (auto-undo per spec).
@@ -82,8 +87,16 @@ export type GameEvent =
 
 export type DeathCause = 'spikes' | 'fell';
 
-/** Rows each dog fell while settling, keyed by dog id (absent = didn't fall). */
+/** Rows each dog's head fell while settling, keyed by dog id (absent = didn't fall). */
 export type FallRows = Readonly<Record<number, number>>;
+
+/**
+ * Snacks eaten mid-fall, keyed by dog id: for each snack, how many rows the
+ * head had fallen when it landed on it (1 = the first row of the fall).
+ * Ascending. Absent = the dog ate nothing while falling. Presentational
+ * hint only (lets the renderer time the munch); state already reflects it.
+ */
+export type FallEats = Readonly<Record<number, readonly number[]>>;
 
 export type MoveResult =
   | {
@@ -91,12 +104,14 @@ export type MoveResult =
       readonly state: GameState;
       readonly events: readonly GameEvent[];
       readonly fallRows: FallRows;
+      readonly fallEats: FallEats;
     }
   | {
       readonly status: 'won';
       readonly state: GameState;
       readonly events: readonly GameEvent[];
       readonly fallRows: FallRows;
+      readonly fallEats: FallEats;
     }
   | { readonly status: 'blocked' }
   | { readonly status: 'dead'; readonly cause: DeathCause };
@@ -174,59 +189,100 @@ type GravityResult =
   | {
       readonly status: 'settled';
       readonly dogs: readonly Dog[];
+      /** Snacks left after any mid-fall eating. */
+      readonly snacks: readonly Cell[];
       readonly anyFell: boolean;
-      /** Rows fallen per dog, indexed like the dogs array. */
+      /** Rows each dog's head fell, indexed like the dogs array. */
       readonly rowsFallen: readonly number[];
+      /** Per dog (indexed like the dogs array): head rows at which it ate. */
+      readonly eatRows: readonly (readonly number[])[];
     }
   | { readonly status: 'dead'; readonly cause: DeathCause };
 
 /**
- * Settle all dogs under gravity. A dog is supported if any segment sits
- * directly on a wall, a statue, or a segment of a (transitively) supported
- * dog. All unsupported dogs fall together one row per step. Falling below
- * the grid or into a spike cell is death.
+ * Which dogs are supported: a dog is supported if any segment sits directly
+ * on a wall, a statue, or a segment of a (transitively) supported dog.
+ * `preset` dogs count as supported from the start (bodies that stay put
+ * this row while their head eats).
+ */
+function supportedDogs(
+  state: GameState,
+  dogs: readonly Dog[],
+  preset: ReadonlySet<number>,
+): Set<number> {
+  const cellOwner = dogCellMap(dogs);
+  const supported = new Set<number>(preset);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    dogs.forEach((dog, i) => {
+      if (supported.has(i)) return;
+      for (const c of dog.cells) {
+        const below = cellKey(c.x, c.y + 1);
+        const owner = cellOwner.get(below);
+        if (
+          isTerrain(state, c.x, c.y + 1) ||
+          (owner !== undefined && owner !== i && supported.has(owner))
+        ) {
+          supported.add(i);
+          changed = true;
+          return;
+        }
+      }
+    });
+  }
+  return supported;
+}
+
+/**
+ * Settle all dogs under gravity. All unsupported dogs fall together one row
+ * per step. A falling dog whose head has a snack directly beneath it eats
+ * it that row: the head advances onto the snack and the body stays put
+ * (growing the dog by one, tail in place, exactly like an eating move).
+ * Falling below the grid or into a spike cell is death.
  */
 function settle(state: GameState, dogsIn: readonly Dog[]): GravityResult {
   let dogs = dogsIn;
+  let snacks = state.snacks;
   let anyFell = false;
   const rowsFallen = dogsIn.map(() => 0);
+  const eatRows: number[][] = dogsIn.map(() => []);
 
   for (;;) {
-    const cellOwner = dogCellMap(dogs);
-    const supported = new Set<number>();
-    let changed = true;
-    while (changed) {
-      changed = false;
-      dogs.forEach((dog, i) => {
-        if (supported.has(i)) return;
-        for (const c of dog.cells) {
-          const below = cellKey(c.x, c.y + 1);
-          const owner = cellOwner.get(below);
-          if (
-            isTerrain(state, c.x, c.y + 1) ||
-            (owner !== undefined && owner !== i && supported.has(owner))
-          ) {
-            supported.add(i);
-            changed = true;
-            return;
-          }
-        }
-      });
-    }
-
+    let supported = supportedDogs(state, dogs, new Set());
     if (supported.size === dogs.length) {
-      return { status: 'settled', dogs, anyFell, rowsFallen };
+      return { status: 'settled', dogs, snacks, anyFell, rowsFallen, eatRows };
     }
-
     anyFell = true;
+
+    // Eating: an unsupported head with a snack right below it eats it. Its
+    // body does not move this row, so it keeps supporting whatever rests on
+    // it — recompute support with the eaters' bodies treated as resting.
+    const eaters = new Set<number>();
+    dogs.forEach((dog, i) => {
+      if (supported.has(i)) return;
+      const head = dog.cells[0];
+      const idx = snacks.findIndex((s) => s.x === head.x && s.y === head.y + 1);
+      if (idx < 0) return;
+      eaters.add(i);
+      snacks = snacks.filter((_, j) => j !== idx);
+    });
+    if (eaters.size > 0) supported = supportedDogs(state, dogs, eaters);
+
     dogs = dogs.map((dog, i) => {
+      if (eaters.has(i)) {
+        rowsFallen[i] += 1;
+        eatRows[i].push(rowsFallen[i]);
+        const head = dog.cells[0];
+        return { ...dog, cells: [{ x: head.x, y: head.y + 1 }, ...dog.cells] };
+      }
       if (supported.has(i)) return dog;
       rowsFallen[i] += 1;
       return { ...dog, cells: dog.cells.map((c) => ({ x: c.x, y: c.y + 1 })) };
     });
 
     for (let i = 0; i < dogs.length; i++) {
-      if (supported.has(i)) continue;
+      if (supported.has(i) && !eaters.has(i)) continue;
       for (const c of dogs[i].cells) {
         if (c.y >= state.height) return { status: 'dead', cause: 'fell' };
         if (state.spikes.has(cellKey(c.x, c.y))) return { status: 'dead', cause: 'spikes' };
@@ -261,16 +317,28 @@ function finishAction(
   if (settled.anyFell) events.push('fell');
 
   const fallRows: Record<number, number> = {};
+  const fallEats: Record<number, readonly number[]> = {};
   settled.rowsFallen.forEach((rows, i) => {
     if (rows > 0) fallRows[dogs[i].id] = rows;
+    const eats = settled.eatRows[i];
+    if (eats.length > 0) {
+      fallEats[dogs[i].id] = eats;
+      for (let k = 0; k < eats.length; k++) events.push('ate');
+    }
   });
+  if (midState.snacks.length > 0 && settled.snacks.length === 0) events.push('exitOpened');
 
   const active =
     dogs.length === 0 ? 0 : Math.min(patch.activeDog ?? state.activeDog, dogs.length - 1);
-  const next: GameState = { ...midState, dogs: settled.dogs, activeDog: active };
+  const next: GameState = {
+    ...midState,
+    snacks: settled.snacks,
+    dogs: settled.dogs,
+    activeDog: active,
+  };
 
-  if (isWon(next)) return { status: 'won', state: next, events, fallRows };
-  return { status: 'moved', state: next, events, fallRows };
+  if (isWon(next)) return { status: 'won', state: next, events, fallRows, fallEats };
+  return { status: 'moved', state: next, events, fallRows, fallEats };
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +452,7 @@ export function swapDog(state: GameState): MoveResult {
     state: { ...state, activeDog: (state.activeDog + 1) % state.dogs.length },
     events: [],
     fallRows: {},
+    fallEats: {},
   };
 }
 

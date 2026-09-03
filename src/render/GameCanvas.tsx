@@ -14,13 +14,16 @@
 //   started during a mount render can be dropped, freezing the dog
 //   mid-tween — so a mount-only effect re-kicks the same targets after
 //   commit (idempotent; withTiming retargets from the current value).
-//   The step is a single MOVE_TWEEN_MS linear withTiming; a gravity fall
-//   is sequenced after it as ONE continuous tween over the whole fall
-//   distance (duration scaled by rows, ease-in, squash on landing) using
-//   the per-dog fall rows reported by the rules — the renderer never
-//   re-derives gravity. Because withTiming retargets from the current
-//   animated value, rapid inputs and interrupted falls catch up smoothly
-//   instead of snapping.
+//   Each segment's tween is a withSequence built from the dog's action
+//   timeline (scene.ts buildDogTimeline): a MOVE_TWEEN_MS linear step,
+//   then a gravity fall as ONE continuous ease-in tween over the fall
+//   distance (duration scaled by rows, squash on landing). A snack eaten
+//   mid-fall splits the fall: the head steps down onto it while the body
+//   slides one tile forward and the new tail pops in, then the fall
+//   resumes. The timeline is unwound from the per-dog fall rows and eat
+//   rows reported by the rules — the renderer never re-derives gravity.
+//   Because withTiming retargets from the current animated value, rapid
+//   inputs and interrupted falls catch up smoothly instead of snapping.
 // - Static layers (sky, board frame, terrain, snacks) are baked into
 //   SkPictures rebuilt only on discrete changes, so an animated frame
 //   replays two pictures instead of re-walking dozens of Path nodes.
@@ -73,17 +76,26 @@ import {
   WIN_FX_MS,
   type PackPalette,
 } from '../game/config';
-import { isExitOpen, type Cell, type Dir, type FallRows, type GameState } from '../game/rules';
+import {
+  isExitOpen,
+  type Cell,
+  type Dir,
+  type FallEats,
+  type FallRows,
+  type GameState,
+} from '../game/rules';
 import type { Feedback } from '../store/gameStore';
 import {
   buildSkyPicture,
   buildBoardPicture,
 } from './pictures';
 import {
-  fallDurationMs,
+  buildActionTimelines,
   hash01,
   newStatueCells,
   segmentGrounded,
+  type DogTimeline,
+  type Keyframe,
   type Layout,
 } from './scene';
 
@@ -254,21 +266,24 @@ function tailAngleFor(cells: readonly Cell[]): number {
 
 interface DogViewProps {
   cells: readonly Cell[];
-  fromCells: readonly Cell[];
   grounded: readonly boolean[];
-  /** This state gained a segment (ate a bone) — animate the two-phase grow. */
-  grew: boolean;
+  /** What happened to this dog this action, as per-segment keyframes. */
+  timeline: DogTimeline;
   active: boolean;
   exitOpen: boolean;
   layout: Layout;
-  /** Rows this dog fell this move (0 = no fall) + the matching tween length. */
-  fall: number;
-  fallMs: number;
   /** Identity of the current GameState — keys the once-per-move retarget. */
   stateRef: GameState;
   moveClock: SharedValue<number>;
-  munch: SharedValue<number>;
   wag: SharedValue<number>;
+}
+
+/** Keyframe → the withTiming leg that plays it (fall legs ease in). */
+function legAnim(k: Keyframe, target: number) {
+  return withTiming(target, {
+    duration: k.ms,
+    easing: k.kind === 'fall' ? Easing.in(Easing.quad) : Easing.linear,
+  });
 }
 
 /**
@@ -276,7 +291,7 @@ interface DogViewProps {
  * component by `${dog.id}:${cells.length}` — any length change remounts.
  */
 function DogView({
-  cells, fromCells, grounded, grew, active, exitOpen, layout, fall, fallMs, stateRef, moveClock, munch, wag,
+  cells, grounded, timeline, active, exitOpen, layout, stateRef, moveClock, wag,
 }: DogViewProps) {
   const t = layout.tile;
   const n = cells.length;
@@ -284,55 +299,74 @@ function DogView({
   const body = active ? COLORS.dogBody : COLORS.dogInactive;
   const earColor = active ? COLORS.dogEar : COLORS.dogInactiveEar;
 
-  // Per-segment animated pixel origin (top-left), seeded at the pre-move
-  // position on mount. All interpolation below happens on the UI thread.
+  // Per-segment animated pixel origin (top-left), seeded at the timeline's
+  // start position on mount. All interpolation below happens on the UI thread.
   const xs = cells.map((_, i) =>
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    useSharedValue(px(layout, fromCells[i].x)),
+    useSharedValue(px(layout, timeline.from[i].x)),
   );
   const ys = cells.map((_, i) =>
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    useSharedValue(py(layout, fromCells[i].y)),
+    useSharedValue(py(layout, timeline.from[i].y)),
   );
   const squash = useSharedValue(1);
 
-  // On an eating move the body takes its normal one-tile step while the
-  // new tail segment (seeded at the old tail cell, its final position)
-  // inflates into place — no sequenced multi-phase movement.
-  const tailPop = useSharedValue(grew ? 0 : 1);
+  // Grow pop per segment: a segment born this action (move-eat tail, or a
+  // tail added by a mid-fall eat) sits at scale 0 on its birth cell and
+  // inflates into place at its pop time — no sequenced multi-phase movement.
+  const pops = cells.map((_, i) =>
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useSharedValue(timeline.popAt[i] === null ? 1 : 0),
+  );
 
-  // Retarget every segment to the current state's targets. Runs during
-  // render for in-place updates (see the header note), and once more after
-  // commit for the remount that follows an eat, whose render-phase
-  // animation starts can be dropped. Both runs aim at the same targets, so
-  // the double start is harmless.
+  // Munch pulse (head scale + jaw), one pulse per eat at its timeline time.
+  const munch = useSharedValue(1);
+
+  // Retarget every segment along its track. Runs during render for
+  // in-place updates (see the header note), and once more after commit for
+  // the remount that follows a grow, whose render-phase animation starts
+  // can be dropped. Both runs aim at the same targets, so the double start
+  // is harmless.
   const retarget = () => {
-    const fallPx = fall * t;
     for (let i = 0; i < n; i++) {
-      const tx = px(layout, cells[i].x);
-      const ty = py(layout, cells[i].y);
-      xs[i].value = withTiming(tx, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
-      ys[i].value =
-        fall > 0
-          ? withSequence(
-              withTiming(ty - fallPx, { duration: MOVE_TWEEN_MS, easing: Easing.linear }),
-              withTiming(ty, { duration: fallMs, easing: Easing.in(Easing.quad) }),
-            )
-          : withTiming(ty, { duration: MOVE_TWEEN_MS, easing: Easing.linear });
+      const track = timeline.tracks[i];
+      const [x0, ...xr] = track.map((k) => legAnim(k, px(layout, k.x)));
+      const [y0, ...yr] = track.map((k) => legAnim(k, py(layout, k.y)));
+      xs[i].value = withSequence(x0, ...xr);
+      ys[i].value = withSequence(y0, ...yr);
+      const pop = timeline.popAt[i];
+      if (pop !== null) {
+        pops[i].value = 0;
+        pops[i].value = withDelay(
+          pop,
+          withTiming(1, { duration: GROW_TWEEN_MS, easing: Easing.out(Easing.quad) }),
+        );
+      }
     }
     squash.value = 1;
-    if (fall > 0) {
+    if (timeline.landAt > 0) {
       squash.value = withDelay(
-        MOVE_TWEEN_MS + fallMs,
+        timeline.landAt,
         withSequence(
           withTiming(SQUASH_SCALE, { duration: SQUASH_MS, easing: Easing.out(Easing.quad) }),
           withSpring(1, { damping: 9, stiffness: 420 }),
         ),
       );
     }
-    if (grew) {
-      tailPop.value = 0;
-      tailPop.value = withTiming(1, { duration: GROW_TWEEN_MS, easing: Easing.out(Easing.quad) });
+    if (timeline.eatAt.length > 0) {
+      // Hold at 0 (no pulse) until each eat, then sweep 0→1 over MUNCH_MS.
+      munch.value = 0;
+      const legs: number[] = [];
+      let at = 0;
+      for (const e of timeline.eatAt) {
+        legs.push(
+          withTiming(0, { duration: Math.max(0, e - at) }) as unknown as number,
+          withTiming(1, { duration: MUNCH_MS, easing: Easing.linear }) as unknown as number,
+        );
+        at = Math.max(e, at) + MUNCH_MS;
+      }
+      const [m0, ...mr] = legs;
+      munch.value = withSequence(m0, ...mr);
     }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -341,11 +375,11 @@ function DogView({
   useEffect(retarget, []);
 
   // One derived transform per segment; reused by every pass that draws it.
-  // The last segment carries the grow pop scale (1 except while inflating).
+  // Each segment carries its grow pop scale (1 except while inflating).
   const segTfs = cells.map((_, i) =>
     // eslint-disable-next-line react-hooks/rules-of-hooks
     useDerivedValue(() => {
-      const p = i === n - 1 ? tailPop.value : 1;
+      const p = pops[i].value;
       return [
         { translateX: xs[i].value + half },
         { translateY: ys[i].value + half },
@@ -382,7 +416,7 @@ function DogView({
   const headFlip = facing === 'left' ? -1 : 1;
   const headRot = facing === 'up' ? -Math.PI / 2 : facing === 'down' ? Math.PI / 2 : 0;
   const headTf = useDerivedValue(() => {
-    const pulse = active ? 1 + MUNCH_SCALE * Math.sin(Math.min(munch.value, 1) * Math.PI) : 1;
+    const pulse = 1 + MUNCH_SCALE * Math.sin(Math.min(munch.value, 1) * Math.PI);
     return [
       { translateX: xs[0].value + half },
       { translateY: ys[0].value + half },
@@ -408,7 +442,7 @@ function DogView({
 
   // Jaw opens with the munch pulse.
   const jawTf = useDerivedValue(() => {
-    const open = active ? Math.sin(Math.min(munch.value, 1) * Math.PI) : 0;
+    const open = Math.sin(Math.min(munch.value, 1) * Math.PI);
     return [{ translateY: t * 0.68 }, { scaleY: 0.15 + 0.85 * open }, { translateY: -t * 0.68 }];
   });
 
@@ -420,7 +454,7 @@ function DogView({
     return [
       { translateX: xs[n - 1].value + half },
       { translateY: ys[n - 1].value + half },
-      { scale: tailPop.value },
+      { scale: pops[n - 1].value },
       { rotate: a },
       { translateX: -half },
       { translateY: -half },
@@ -656,6 +690,7 @@ export function GameCanvas({
   state,
   prevState,
   fallRows,
+  fallEats,
   width,
   height,
   pack,
@@ -666,6 +701,7 @@ export function GameCanvas({
   state: GameState;
   prevState: GameState | null;
   fallRows: FallRows;
+  fallEats: FallEats;
   width: number;
   height: number;
   pack: number;
@@ -678,7 +714,6 @@ export function GameCanvas({
   const moveClock = useSharedValue(1);
   const pulse = useSharedValue(0);
   const wag = useSharedValue(0);
-  const munch = useSharedValue(1);
   const door = useSharedValue(0);
   const shake = useSharedValue(1);
 
@@ -702,8 +737,8 @@ export function GameCanvas({
     wag.value = withRepeat(withTiming(1, { duration: WAG_CYCLE_MS, easing: Easing.linear }), -1);
   }, [pulse, wag]);
 
-  // Event-driven juice triggers (landing squash lives in DogView, timed to
-  // each dog's own fall tween).
+  // Event-driven juice triggers (landing squash and munch live in DogView,
+  // timed to each dog's own action timeline).
   useEffect(() => {
     if (feedbackTick === 0) return;
     if (feedback.kind === 'dead') {
@@ -713,10 +748,6 @@ export function GameCanvas({
     }
     if (feedback.kind !== 'events') return;
     const ev = feedback.events;
-    if (ev.includes('ate')) {
-      munch.value = 0;
-      munch.value = withTiming(1, { duration: MUNCH_MS, easing: Easing.linear });
-    }
     if (ev.includes('spawned')) {
       door.value = 0;
       door.value = withSequence(
@@ -753,6 +784,11 @@ export function GameCanvas({
   );
 
   const washCells = useMemo(() => newStatueCells(state, prevState), [state, prevState]);
+  // Per-dog action timelines (step, falls, mid-fall eats) for this state.
+  const timelines = useMemo(
+    () => buildActionTimelines(state, prevState, fallRows, fallEats),
+    [state, prevState, fallRows, fallEats],
+  );
   const exitOpen = isExitOpen(state);
 
   if (width <= 0 || height <= 0 || layout.tile <= 0) return null;
@@ -776,35 +812,20 @@ export function GameCanvas({
         {washCells.length > 0 && <StatueWash key={`wash${feedbackTick}`} cells={washCells} layout={layout} />}
 
         {state.dogs.map((dog, di) => {
-          const prevDog = prevState?.dogs.find((d) => d.id === dog.id);
-          const fall = fallRows[dog.id] ?? 0;
-          const fromCells = dog.cells.map((c, i) => {
-            // A dog with no previous state (level load, fresh spawn) starts
-            // at its pre-fall position so a spawn-fall still animates.
-            if (!prevDog) return fall > 0 ? { x: c.x, y: c.y - fall } : c;
-            // Same-index mapping makes a grow move read like a normal step:
-            // every segment slides one tile forward while the new tail
-            // segment starts on (and stays at) the old tail cell.
-            const j = Math.min(i, prevDog.cells.length - 1);
-            return prevDog.cells[j];
-          });
           const grounded = dog.cells.map((c) => segmentGrounded(state, c));
-          const grew = prevDog !== undefined && dog.cells.length > prevDog.cells.length;
+          const timeline = timelines.get(dog.id);
+          if (!timeline) return null;
           return (
             <DogView
               key={`${dog.id}:${dog.cells.length}`}
               cells={dog.cells}
-              fromCells={fromCells}
               grounded={grounded}
-              grew={grew}
+              timeline={timeline}
               active={di === state.activeDog}
               exitOpen={exitOpen}
               layout={layout}
-              fall={fall}
-              fallMs={fallDurationMs(fall)}
               stateRef={state}
               moveClock={moveClock}
-              munch={munch}
               wag={wag}
             />
           );
