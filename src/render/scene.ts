@@ -6,9 +6,15 @@
 // Everything here is deterministic: decoration jitter comes from a cell
 // hash, never Math.random, so the board is stable across re-renders.
 
-import type { Cell, GameState } from '../game/rules';
+import type { Cell, FallEats, FallRows, GameState } from '../game/rules';
 import { cellKey } from '../game/rules';
-import { FALL_MAX_MS, FALL_MIN_MS, FALL_MS_PER_ROW, type SkyDecor } from '../game/config';
+import {
+  FALL_MAX_MS,
+  FALL_MIN_MS,
+  FALL_MS_PER_ROW,
+  MOVE_TWEEN_MS,
+  type SkyDecor,
+} from '../game/config';
 
 export interface Layout {
   readonly tile: number;
@@ -316,6 +322,158 @@ export function buildSkyPaths(width: number, height: number, decor: SkyDecor): S
 export function fallDurationMs(rows: number): number {
   if (rows <= 0) return 0;
   return Math.min(FALL_MAX_MS, Math.max(FALL_MIN_MS, rows * FALL_MS_PER_ROW));
+}
+
+// ---------------------------------------------------------------------------
+// Per-dog action timeline (pure; consumed by the dog view and the SFX cues)
+// ---------------------------------------------------------------------------
+
+/** One leg of a segment's tween, in grid units. `fall` legs ease in. */
+export interface Keyframe {
+  readonly x: number;
+  readonly y: number;
+  readonly ms: number;
+  readonly kind: 'step' | 'fall' | 'hold';
+}
+
+export interface DogTimeline {
+  /** Where each final segment starts (seeded before the first frame). */
+  readonly from: readonly Cell[];
+  /** Per final segment: legs from `from` to its final cell, in order. */
+  readonly tracks: readonly (readonly Keyframe[])[];
+  /**
+   * Per final segment: ms at which it inflates into existence, or null if it
+   * existed before this action. 0 = grown by the move itself.
+   */
+  readonly popAt: readonly (number | null)[];
+  /** ms at which the head eats (a move-eat is at 0; fall-eats later). */
+  readonly eatAt: readonly number[];
+  /** ms at which the dog comes to rest after falling (0 if it did not fall). */
+  readonly landAt: number;
+  readonly totalMs: number;
+}
+
+type Phase =
+  | { readonly kind: 'fall'; readonly rows: number }
+  /** Head advanced onto a snack; body stayed. `cells` = shape after it. */
+  | { readonly kind: 'eat'; readonly cells: readonly Cell[] };
+
+/**
+ * Rebuild what happened to one dog this action from the rules' report and
+ * lay it out as per-segment keyframes: the move step, then alternating
+ * falls and mid-fall eats. Never re-derives gravity: it only unwinds the
+ * documented shape changes (a fall shifts every cell down one row per row;
+ * a fall-eat prepends a head cell one row down and leaves the body put).
+ */
+export function buildDogTimeline(
+  prevCells: readonly Cell[] | null,
+  cells: readonly Cell[],
+  fallRows: number,
+  eatRows: readonly number[],
+): DogTimeline {
+  // Unwind the fall from the final shape back to the shape right after the
+  // move step, collecting phases in forward order.
+  const phases: Phase[] = [];
+  let cur: readonly Cell[] = cells;
+  let rowsAfter = fallRows - (eatRows.length > 0 ? eatRows[eatRows.length - 1] : 0);
+  for (let j = eatRows.length - 1; j >= 0; j--) {
+    if (rowsAfter > 0) phases.unshift({ kind: 'fall', rows: rowsAfter });
+    cur = cur.map((c) => ({ x: c.x, y: c.y - rowsAfter }));
+    phases.unshift({ kind: 'eat', cells: cur });
+    cur = cur.slice(1);
+    rowsAfter = eatRows[j] - (j > 0 ? eatRows[j - 1] : 0) - 1;
+  }
+  if (rowsAfter > 0) phases.unshift({ kind: 'fall', rows: rowsAfter });
+  const afterMove = cur.map((c) => ({ x: c.x, y: c.y - rowsAfter }));
+
+  const n = cells.length;
+  const from: Cell[] = [];
+  const tracks: Keyframe[][] = [];
+  const popAt: (number | null)[] = [];
+  const eatAt: number[] = [];
+
+  const grewByMove = prevCells !== null && afterMove.length > prevCells.length;
+  if (grewByMove) eatAt.push(0);
+
+  for (let i = 0; i < n; i++) {
+    const track: Keyframe[] = [];
+    let t = 0;
+    // Segments that exist after the move step start at the pre-move cell of
+    // the same index (each slides one tile forward; a move-grown tail starts
+    // on, and stays at, the old tail cell). Segments born mid-fall wait at
+    // their birth cell (scale 0) until their eat.
+    let exists = i < afterMove.length;
+    let pos: Cell;
+    if (!exists) {
+      const birth = phases.find(
+        (ph): ph is Extract<Phase, { kind: 'eat' }> => ph.kind === 'eat' && ph.cells.length > i,
+      );
+      pos = birth ? birth.cells[i] : cells[i];
+      track.push({ ...pos, ms: MOVE_TWEEN_MS, kind: 'hold' });
+    } else if (prevCells === null) {
+      pos = afterMove[i];
+      track.push({ ...pos, ms: MOVE_TWEEN_MS, kind: 'hold' });
+    } else {
+      pos = prevCells[Math.min(i, prevCells.length - 1)];
+      track.push({ ...afterMove[i], ms: MOVE_TWEEN_MS, kind: 'step' });
+    }
+    from.push(pos);
+    t += MOVE_TWEEN_MS;
+    popAt.push(exists ? (grewByMove && i === n - 1 ? 0 : null) : null);
+
+    for (const ph of phases) {
+      const last = track[track.length - 1];
+      if (ph.kind === 'fall') {
+        const ms = fallDurationMs(ph.rows);
+        track.push(
+          exists
+            ? { x: last.x, y: last.y + ph.rows, ms, kind: 'fall' }
+            : { x: last.x, y: last.y, ms, kind: 'hold' },
+        );
+        t += ms;
+      } else {
+        // Eat step: head drops onto the snack, body slides one tile forward,
+        // the new tail pops in on the old tail cell.
+        const born = !exists && i === ph.cells.length - 1;
+        if (born) {
+          exists = true;
+          popAt[i] = t;
+          track.push({ x: last.x, y: last.y, ms: MOVE_TWEEN_MS, kind: 'hold' });
+        } else {
+          track.push(
+            exists
+              ? { ...ph.cells[i], ms: MOVE_TWEEN_MS, kind: 'step' }
+              : { x: last.x, y: last.y, ms: MOVE_TWEEN_MS, kind: 'hold' },
+          );
+        }
+        if (i === 0) eatAt.push(t);
+        t += MOVE_TWEEN_MS;
+      }
+    }
+    tracks.push(track);
+  }
+
+  const totalMs = tracks.length > 0 ? tracks[0].reduce((a, k) => a + k.ms, 0) : 0;
+  const landAt = fallRows > 0 ? totalMs : 0;
+  return { from, tracks, popAt, eatAt, landAt, totalMs };
+}
+
+/** Timeline for every dog in `state`, keyed by dog id. */
+export function buildActionTimelines(
+  state: GameState,
+  prevState: GameState | null,
+  fallRows: FallRows,
+  fallEats: FallEats,
+): ReadonlyMap<number, DogTimeline> {
+  const out = new Map<number, DogTimeline>();
+  for (const dog of state.dogs) {
+    const prev = prevState?.dogs.find((d) => d.id === dog.id);
+    out.set(
+      dog.id,
+      buildDogTimeline(prev ? prev.cells : null, dog.cells, fallRows[dog.id] ?? 0, fallEats[dog.id] ?? []),
+    );
+  }
+  return out;
 }
 
 /** Whether a dog segment stands on terrain (draws stubby legs). */

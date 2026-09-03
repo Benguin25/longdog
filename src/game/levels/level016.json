@@ -27,7 +27,7 @@
     ]
   ],
   "spawnDir": "right",
-  "par": 21,
+  "par": 26,
   "mechanics": [
     "freeze"
   ],

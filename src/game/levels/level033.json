@@ -27,7 +27,7 @@
     ]
   ],
   "spawnDir": "left",
-  "par": 22,
+  "par": 20,
   "mechanics": [
     "spikes",
     "freeze",

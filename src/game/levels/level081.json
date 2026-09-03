@@ -28,7 +28,7 @@
     ]
   ],
   "spawnDir": "left",
-  "par": 35,
+  "par": 36,
   "mechanics": [
     "reach",
     "spikes",

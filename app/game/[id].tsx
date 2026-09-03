@@ -9,7 +9,6 @@ import {
   HAPTICS_ENABLED,
   HINT_MAX_STATES,
   HINT_MOVES,
-  MOVE_TWEEN_MS,
   PACK_SIZE,
   SHOW_FPS_OVERLAY,
   SHOW_HINT_BUTTON,
@@ -22,7 +21,7 @@ import { LEVELS } from '../../src/game/levels';
 import { starsForClear } from '../../src/game/scoring';
 import { solveState } from '../../src/game/solve';
 import { GameCanvas } from '../../src/render/GameCanvas';
-import { fallDurationMs } from '../../src/render/scene';
+import { buildActionTimelines } from '../../src/render/scene';
 import { useGameStore } from '../../src/store/gameStore';
 import { useProgressStore } from '../../src/store/progressStore';
 import { DPad } from '../../src/ui/DPad';
@@ -46,6 +45,7 @@ export default function GameScreen() {
   const state = useGameStore((s) => s.state);
   const prevState = useGameStore((s) => s.prevState);
   const fallRows = useGameStore((s) => s.fallRows);
+  const fallEats = useGameStore((s) => s.fallEats);
   const moveCount = useGameStore((s) => s.moveCount);
   const won = useGameStore((s) => s.won);
   const feedback = useGameStore((s) => s.feedback);
@@ -97,9 +97,24 @@ export default function GameScreen() {
     }
     if (feedback.kind === 'events') {
       const ev = feedback.events;
+      const timers: ReturnType<typeof setTimeout>[] = [];
+      // Time the crunch and the landing thud to the dogs' action timelines
+      // (a bone eaten mid-fall crunches when the head actually reaches it).
+      const st = useGameStore.getState();
+      const timelines = st.state
+        ? [...buildActionTimelines(st.state, st.prevState, st.fallRows, st.fallEats).values()]
+        : [];
       if (ev.includes('ate')) {
-        playSfx('crunch', soundEnabled);
-        buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
+        const crunch = () => {
+          playSfx('crunch', soundEnabled);
+          buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
+        };
+        const eatAts = timelines.flatMap((tl) => tl.eatAt);
+        if (eatAts.length === 0) eatAts.push(0);
+        for (const at of new Set(eatAts)) {
+          if (at <= 0) crunch();
+          else timers.push(setTimeout(crunch, at));
+        }
       }
       if (ev.includes('froze')) {
         playSfx('crack', soundEnabled);
@@ -111,11 +126,10 @@ export default function GameScreen() {
         buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
       } else if (ev.includes('fell')) {
         // Play the thud when the fall tween actually lands, not at move time.
-        const rows = Object.values(useGameStore.getState().fallRows);
-        const landAt = MOVE_TWEEN_MS + fallDurationMs(rows.length ? Math.max(...rows) : 0);
-        const landTimer = setTimeout(() => playSfx('land', soundEnabled), landAt);
-        return () => clearTimeout(landTimer);
+        const landAt = Math.max(0, ...timelines.map((tl) => tl.landAt));
+        timers.push(setTimeout(() => playSfx('land', soundEnabled), landAt));
       }
+      return () => timers.forEach(clearTimeout);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedback, feedbackTick, buzz]);
@@ -211,6 +225,7 @@ export default function GameScreen() {
               state={state}
               prevState={prevState}
               fallRows={fallRows}
+              fallEats={fallEats}
               width={board.w}
               height={board.h}
               pack={levelIndex >= 0 ? Math.floor(levelIndex / PACK_SIZE) : 0}

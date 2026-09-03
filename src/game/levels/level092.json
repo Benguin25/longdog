@@ -28,7 +28,7 @@
     ]
   ],
   "spawnDir": "left",
-  "par": 28,
+  "par": 26,
   "mechanics": [
     "freeze x2",
     "chained-dogs"

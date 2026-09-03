@@ -8,6 +8,7 @@ import {
   parseLevel,
   type Action,
   type DeathCause,
+  type FallEats,
   type FallRows,
   type GameEvent,
   type GameState,
@@ -28,6 +29,7 @@ interface GameStore {
   prevState: GameState | null;
   /** Rows each dog fell in the latest action (drives the fall tween). */
   fallRows: FallRows;
+  fallEats: FallEats;
   history: GameState[];
   moveCount: number;
   won: boolean;
@@ -46,6 +48,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   state: null,
   prevState: null,
   fallRows: {},
+  fallEats: {},
   history: [],
   moveCount: 0,
   won: false,
@@ -60,6 +63,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       state: parseLevel(level),
       prevState: null,
       fallRows: {},
+      fallEats: {},
       history: [],
       moveCount: 0,
       won: false,
@@ -90,6 +94,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           prevState: state,
           state: result.state,
           fallRows: result.fallRows,
+          fallEats: result.fallEats,
           history: [...history, state],
           moveCount: moveCount + 1,
           won: result.status === 'won',
@@ -108,6 +113,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       prevState: state,
       state: prev,
       fallRows: {},
+      fallEats: {},
       history: history.slice(0, -1),
       moveCount: moveCount - 1,
       won: false,
@@ -123,6 +129,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       state: parseLevel(level),
       prevState: null,
       fallRows: {},
+      fallEats: {},
       history: [],
       moveCount: 0,
       won: false,
