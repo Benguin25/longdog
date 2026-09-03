@@ -74,8 +74,15 @@ export const DUST_COUNT = 8;
 export const WIN_FX_MS = 1600;
 export const CONFETTI_COUNT = 36;
 
-/** Delay before leaving the game screen after a clear (lets confetti play). */
+/** Delay after the exit walk finishes before leaving the game screen
+ *  (lets confetti play). */
 export const WIN_NAVIGATE_MS = 1250;
+
+/** Exit walk: ms per segment step into the door. */
+export const EXIT_STEP_MS = 110;
+
+/** Exit walk: door light burst + bump duration. */
+export const EXIT_BURST_MS = 420;
 
 /** Tail-wag cycle when idle at an open exit / ear-flap sizes. */
 export const WAG_CYCLE_MS = 360;
@@ -157,6 +164,16 @@ export const PACK_PALETTES: readonly PackPalette[] = [
   },
 ];
 
+/** A cosmetic dog coat: the three colors that make up a dachshund's skin. */
+export interface CoatColors {
+  readonly body: string;
+  readonly belly: string;
+  readonly ear: string;
+}
+
+/** Head accessory cosmetics (one equipped at a time, or none). */
+export type AccessoryId = 'bandana' | 'bow' | 'party-hat' | 'sunglasses' | 'crown';
+
 /** Shared palette (bright, saturated, thick-outline cartoon look). */
 export const COLORS = {
   outline: '#2B1B10',
@@ -208,3 +225,86 @@ export const COLORS = {
   rewind: '#FFFFFF',
   confetti: ['#FF5A5A', '#FFD542', '#5FBF4A', '#5AA9FF', '#C77DFF', '#FF9A3D'],
 } as const;
+
+/** The default (free, always-owned) coat — today's colors. */
+export const DEFAULT_COAT: CoatColors = {
+  body: COLORS.dogBody,
+  belly: COLORS.dogBelly,
+  ear: COLORS.dogEar,
+};
+
+// ---------------------------------------------------------------------------
+// Cosmetics shop (earned currency, cosmetics only — no monetization)
+// ---------------------------------------------------------------------------
+
+/** Biscuits awarded the first time a level is cleared. */
+export const BISCUITS_FIRST_CLEAR = 10;
+
+/** Biscuits awarded per star newly reached on a level (a first clear at 3★
+ *  earns FIRST_CLEAR + 3 * PER_STAR; later improving 1★ -> 3★ earns
+ *  2 * PER_STAR more). */
+export const BISCUITS_PER_STAR = 5;
+
+/** Biscuits awarded once, the first time the tutorial (all 5 lessons) is
+ *  finished. */
+export const BISCUITS_TUTORIAL = 20;
+
+export interface ShopItem {
+  readonly id: string;
+  readonly slot: 'coat' | 'accessory' | 'theme';
+  readonly name: string;
+  readonly price: number;
+  readonly blurb: string;
+}
+
+/** Coat catalog by id. `classic` is owned and equipped by default and is
+ *  not sold (not listed in SHOP_ITEMS). */
+export const COATS: Record<string, CoatColors> = {
+  classic: DEFAULT_COAT,
+  'black-tan': { body: '#2F2622', belly: '#C98A4A', ear: '#1A1412' },
+  cream: { body: '#EFD7A3', belly: '#FFF4DE', ear: '#D6B07A' },
+  chocolate: { body: '#6E3F25', belly: '#C08A5E', ear: '#4A2A18' },
+  red: { body: '#B34A2A', belly: '#E8A47A', ear: '#7F2F18' },
+  blueberry: { body: '#5A8FE0', belly: '#BFD8FF', ear: '#3A62A8' },
+};
+
+/** Board theme catalog by id — a PackPalette that overrides the pack's own
+ *  palette on every level while equipped. `null`/absent = pack default. */
+export const THEMES: Record<string, PackPalette> = {
+  sunset: {
+    skyTop: '#FF9A76', skyBottom: '#FFD6A5',
+    decor: 'clouds', decorColor: '#FFF1E6', decorAlt: '#FF6B6B',
+    dirt: '#8E5A6B', dirtDark: '#6B4152', grass: '#F28CA8', grassDark: '#C5607D',
+    frame: '#7A3E5C',
+  },
+  candy: {
+    skyTop: '#A5F3FC', skyBottom: '#FDE2FF',
+    decor: 'clouds', decorColor: '#FFFFFF', decorAlt: '#FFB6F5',
+    dirt: '#C77DFF', dirtDark: '#9B5DE5', grass: '#FF8FB1', grassDark: '#E05C8A',
+    frame: '#7B2CBF',
+  },
+  'neon-night': {
+    skyTop: '#0B0F2B', skyBottom: '#23214F',
+    decor: 'stars', decorColor: '#7CF9FF', decorAlt: '#E0E0FF',
+    dirt: '#2E2E4A', dirtDark: '#1D1D33', grass: '#39FF9C', grassDark: '#1FB870',
+    frame: '#5CE1E6',
+  },
+};
+
+/** Purchasable catalog (excludes the free default coat/theme). Total price
+ *  2170; with BISCUITS_TUTORIAL a completionist can earn all of it. */
+export const SHOP_ITEMS: readonly ShopItem[] = [
+  { id: 'black-tan', slot: 'coat', name: 'Black & Tan', price: 80, blurb: 'A classic saddle-black coat with tan points.' },
+  { id: 'cream', slot: 'coat', name: 'Cream', price: 80, blurb: 'Soft and pale, nose to tail.' },
+  { id: 'chocolate', slot: 'coat', name: 'Chocolate', price: 100, blurb: 'Rich, deep brown.' },
+  { id: 'red', slot: 'coat', name: 'Red', price: 100, blurb: 'A warm, fiery red coat.' },
+  { id: 'blueberry', slot: 'coat', name: 'Blueberry', price: 150, blurb: 'A dachshund in an unlikely blue.' },
+  { id: 'bandana', slot: 'accessory', name: 'Red Bandana', price: 60, blurb: 'A jaunty little bandana.' },
+  { id: 'bow', slot: 'accessory', name: 'Pink Bow', price: 80, blurb: 'For a touch of glamour.' },
+  { id: 'party-hat', slot: 'accessory', name: 'Party Hat', price: 120, blurb: 'Every day is a celebration.' },
+  { id: 'sunglasses', slot: 'accessory', name: 'Sunglasses', price: 150, blurb: 'Too cool for the garden.' },
+  { id: 'crown', slot: 'accessory', name: 'Crown', price: 250, blurb: 'Royalty has arrived.' },
+  { id: 'sunset', slot: 'theme', name: 'Sunset', price: 300, blurb: 'Warm pinks and an orange sky.' },
+  { id: 'candy', slot: 'theme', name: 'Candy', price: 300, blurb: 'A sugary pastel wonderland.' },
+  { id: 'neon-night', slot: 'theme', name: 'Neon Night', price: 400, blurb: 'Electric greens under a glowing sky.' },
+];

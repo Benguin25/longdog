@@ -56,8 +56,23 @@ Tone: bright, saturated, thick dark outlines, big expressive eyes (Gate Runner a
 - Persistence: furthest level, stars per level, settings via AsyncStorage.
 
 ## Screens
-Home (play, level select, settings) · Level select (pack grid with stars) · Game ·
-Level clear (stars, next) · Settings (sound/haptics toggles).
+Home (play, level select, tutorial, shop, settings) · Level select (pack grid with stars) ·
+Game · Tutorial (five guided lessons) · Shop (cosmetics) · Level clear (stars, biscuits
+earned, next) · Settings (sound/haptics toggles).
+
+## Tutorial
+Five short, guided lessons (playable, not just text) covering the goal + eating, gravity +
+death/undo, growing longer to reach further, playing dead, and two-dog control. A coach
+banner tells the player what to do; only the intended inputs are accepted (others wiggle
+the banner); each lesson advances on the intended event, using the real rules/store/
+renderer — never a re-implementation. Offered once on first launch, replayable any time
+from Home or the How to Play modal.
+
+## Shop
+Cosmetics only, earned by playing — no monetization. Clearing a level (first time) and
+reaching new stars on it earn "Biscuits"; finishing the tutorial earns a one-time bonus.
+Biscuits buy dog coats, one head accessory, and board themes; equipping is free once
+owned. Purely visual — never affects rules, par, or solvability.
 
 ## Juice
 Snap-to-tile movement tween (80ms), squash on landing after a fall, munch animation +
@@ -68,5 +83,5 @@ All sounds synthesized to .wav via a script, committed, under 500KB total. Hapti
 munch, freeze, death, clear.
 
 ## Out of scope for v1
-Monetization, iOS, level editor UI, timed modes, cosmetics. Sticky/wall-crawl mechanic
-is explicitly cut (fights gravity-based design).
+Monetization, iOS, level editor UI, timed modes. Sticky/wall-crawl mechanic is explicitly
+cut (fights gravity-based design).

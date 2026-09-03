@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
@@ -38,11 +38,27 @@ function MenuButton({
 export default function Home() {
   const router = useRouter();
   const stars = useProgressStore((s) => s.stars);
+  const hydrated = useProgressStore((s) => s.hydrated);
+  const tutorialPrompted = useProgressStore((s) => s.tutorialPrompted);
+  const tutorialDone = useProgressStore((s) => s.tutorialDone);
+  const biscuits = useProgressStore((s) => s.biscuits);
+  const setTutorialPrompted = useProgressStore((s) => s.setTutorialPrompted);
   const [helpVisible, setHelpVisible] = useState(false);
+  const [promptVisible, setPromptVisible] = useState(false);
 
   const continueIndex = furthestUnlockedIndex(stars);
   const continueLevel = LEVELS[continueIndex];
   const earned = totalStars(stars);
+
+  // First launch: offer the tutorial once rehydration has settled.
+  useEffect(() => {
+    if (hydrated && !tutorialPrompted) setPromptVisible(true);
+  }, [hydrated, tutorialPrompted]);
+
+  const dismissPrompt = () => {
+    setTutorialPrompted(true);
+    setPromptVisible(false);
+  };
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -66,9 +82,40 @@ export default function Home() {
           primary
         />
         <MenuButton label="Level Select" onPress={() => router.push('/levels')} />
+        <MenuButton
+          label="Tutorial"
+          sub={tutorialDone ? 'Replay' : '5 quick lessons'}
+          onPress={() => router.push('/tutorial/1')}
+        />
+        <MenuButton label="Shop" sub={`🍪 ${biscuits}`} onPress={() => router.push('/shop')} />
         <MenuButton label="Settings" onPress={() => router.push('/settings')} />
       </View>
-      <HowToPlayModal visible={helpVisible} onClose={() => setHelpVisible(false)} />
+      <HowToPlayModal
+        visible={helpVisible}
+        onClose={() => setHelpVisible(false)}
+        onPlayTutorial={() => router.push('/tutorial/1')}
+      />
+
+      <Modal visible={promptVisible} transparent animationType="fade" onRequestClose={dismissPrompt}>
+        <View style={styles.backdrop}>
+          <View style={styles.promptCard}>
+            <Text style={styles.promptTitle}>New here?</Text>
+            <Text style={styles.promptText}>Learn the ropes in five quick lessons.</Text>
+            <Pressable
+              onPress={() => {
+                dismissPrompt();
+                router.push('/tutorial/1');
+              }}
+              style={({ pressed }) => [styles.promptButton, pressed && styles.promptButtonPressed]}
+            >
+              <Text style={styles.promptButtonLabel}>Play tutorial</Text>
+            </Pressable>
+            <Pressable onPress={dismissPrompt} style={styles.promptLater}>
+              <Text style={styles.promptLaterLabel}>Maybe later</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -106,4 +153,33 @@ const styles = StyleSheet.create({
   menuLabelPrimary: { color: '#F6E7B2', fontSize: 22 },
   menuSub: { fontSize: 13, color: '#8A7358', marginTop: 2 },
   menuSubPrimary: { color: '#C9B285' },
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(59, 42, 26, 0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  promptCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    paddingVertical: 22,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+  },
+  promptTitle: { fontSize: 21, fontWeight: '900', color: '#3B2A1A' },
+  promptText: { fontSize: 14.5, color: '#4A362A', textAlign: 'center', marginTop: 8, marginBottom: 16 },
+  promptButton: {
+    alignSelf: 'stretch',
+    backgroundColor: '#3B2A1A',
+    borderRadius: 14,
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
+  promptButtonPressed: { backgroundColor: '#5C4326' },
+  promptButtonLabel: { color: '#F6E7B2', fontSize: 16, fontWeight: '800' },
+  promptLater: { marginTop: 10, paddingVertical: 6 },
+  promptLaterLabel: { color: '#8A7358', fontSize: 14, fontWeight: '700' },
 });

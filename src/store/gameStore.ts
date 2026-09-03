@@ -8,6 +8,7 @@ import {
   parseLevel,
   type Action,
   type DeathCause,
+  type Dog,
   type FallEats,
   type FallRows,
   type GameEvent,
@@ -36,8 +37,11 @@ interface GameStore {
   /** Feedback for the latest input, with a tick so repeats retrigger effects. */
   feedback: Feedback;
   feedbackTick: number;
+  /** The dog that just walked out the exit in the latest action, if any. */
+  exited: Dog | null;
 
   loadLevel: (id: string) => void;
+  loadLevelData: (level: LevelData) => void;
   dispatch: (action: Action) => void;
   undo: () => void;
   reset: () => void;
@@ -54,10 +58,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
   won: false,
   feedback: { kind: 'none' },
   feedbackTick: 0,
+  exited: null,
 
   loadLevel: (id) => {
     const level = levelById(id);
     if (!level) return;
+    get().loadLevelData(level);
+  },
+
+  loadLevelData: (level) => {
     set({
       level,
       state: parseLevel(level),
@@ -69,6 +78,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       won: false,
       feedback: { kind: 'none' },
       feedbackTick: 0,
+      exited: null,
     });
   },
 
@@ -100,6 +110,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           won: result.status === 'won',
           feedback: { kind: 'events', events: result.events },
           feedbackTick: feedbackTick + 1,
+          exited: result.exited ?? null,
         });
         return;
     }
@@ -119,6 +130,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       won: false,
       feedback: { kind: 'none' },
       feedbackTick: feedbackTick + 1,
+      exited: null,
     });
   },
 
@@ -135,6 +147,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       won: false,
       feedback: { kind: 'none' },
       feedbackTick: feedbackTick + 1,
+      exited: null,
     });
   },
 }));

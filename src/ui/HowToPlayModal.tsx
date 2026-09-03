@@ -10,15 +10,58 @@ import {
   View,
 } from 'react-native';
 
+import type { Action, LevelData } from '../game/rules';
+import { DPad } from './DPad';
+import { MiniBoard } from './MiniBoard';
+
+// Illustration levels: minimal, hand-verified boards that show the real
+// in-game art for each mechanic (parsed + settled, checked against
+// rules.ts — see scripts used during development).
+const GOAL_LEVEL: LevelData = {
+  id: 'htp-goal',
+  name: 'The Goal',
+  grid: ['......', 'E.o...', '######'],
+  dogs: [[[4, 1], [5, 1]]],
+};
+const GRAVITY_LEVEL: LevelData = {
+  id: 'htp-gravity',
+  name: 'Gravity',
+  grid: ['......', '......', '##...E', '##^^##'],
+  dogs: [[[1, 1], [0, 1]]],
+};
+const LONG_DOG_LEVEL: LevelData = {
+  id: 'htp-long',
+  name: 'A Very Long Dog',
+  grid: ['......', '......', '#####E'],
+  dogs: [[[3, 0], [3, 1], [2, 1], [1, 1], [0, 1]]],
+};
+const PLAYING_DEAD_LEVEL: LevelData = {
+  id: 'htp-dead',
+  name: 'Playing Dead',
+  grid: ['..H....', '###..FE', '####^^#'],
+  dogs: [[[4, 1], [3, 1]]],
+  spawnDir: 'left',
+};
+const TWO_DOGS_LEVEL: LevelData = {
+  id: 'htp-two',
+  name: 'Two Dogs',
+  grid: ['....o.', '......', 'E.....', '######'],
+  dogs: [[[2, 2], [3, 2]], [[5, 1], [5, 2]]],
+};
+
+type Illustration =
+  | { kind: 'board'; level: LevelData; moves?: readonly Action[] }
+  | { kind: 'controls' };
+
 type Page = {
-  emoji: string;
+  illustration: Illustration;
   title: string;
   lines: string[];
 };
 
 const PAGES: Page[] = [
   {
-    emoji: '🦴',
+    illustration: { kind: 'board', level: GOAL_LEVEL },
     title: 'The Goal',
     lines: [
       'Eat every bone on the level. Once they’re all eaten, the dog door (the arched doorway) lights up and opens.',
@@ -26,7 +69,7 @@ const PAGES: Page[] = [
     ],
   },
   {
-    emoji: '👆',
+    illustration: { kind: 'controls' },
     title: 'Controls',
     lines: [
       'Swipe on the board, or use the D-pad, to move one tile at a time.',
@@ -34,15 +77,15 @@ const PAGES: Page[] = [
     ],
   },
   {
-    emoji: '🪨',
+    illustration: { kind: 'board', level: GRAVITY_LEVEL },
     title: 'Gravity',
     lines: [
       'After every move, your dog falls unless some part of its body rests on ground, a statue, or another dog.',
-      'Falling off the bottom of the level — or touching the spiky garden rakes — is fatal. Don’t worry: the move is undone automatically.',
+      'Falling off the bottom of the level — or touching the spiky garden rakes shown here — is fatal. Don’t worry: the move is undone automatically.',
     ],
   },
   {
-    emoji: '🐕',
+    illustration: { kind: 'board', level: LONG_DOG_LEVEL },
     title: 'A Very Long Dog',
     lines: [
       'Every bone you eat makes your dog one segment longer.',
@@ -50,15 +93,15 @@ const PAGES: Page[] = [
     ],
   },
   {
-    emoji: '🗿',
+    illustration: { kind: 'board', level: PLAYING_DEAD_LEVEL, moves: ['right'] },
     title: 'Playing Dead',
     lines: [
       'Step your head onto a “play dead” mat and your whole dog turns to stone, exactly in the shape it held.',
-      'A fresh dog pops out of the dog house (the little roofed hut). Statues make great stairs and bridges — the shape you freeze in is the puzzle.',
+      'A fresh dog pops out of the dog house. Statues make great stairs and bridges — the shape you freeze in is the puzzle.',
     ],
   },
   {
-    emoji: '🐕🐕',
+    illustration: { kind: 'board', level: TWO_DOGS_LEVEL },
     title: 'Two Dogs',
     lines: [
       'Some levels have two live dogs. Tap the board (or the Swap button) to switch control.',
@@ -67,7 +110,45 @@ const PAGES: Page[] = [
   },
 ];
 
-export function HowToPlayModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+function PageIllustration({
+  illustration,
+  width,
+  active,
+}: {
+  illustration: Illustration;
+  width: number;
+  active: boolean;
+}) {
+  if (illustration.kind === 'controls') {
+    return (
+      <View style={styles.controlsIllustration}>
+        <View style={styles.dpadScale} pointerEvents="none">
+          <DPad onMove={() => {}} />
+        </View>
+        <Text style={styles.swipeCaption}>swipe ⇠ ⇢</Text>
+      </View>
+    );
+  }
+  return (
+    <MiniBoard
+      level={illustration.level}
+      moves={illustration.moves}
+      width={width}
+      height={120}
+      active={active}
+    />
+  );
+}
+
+export function HowToPlayModal({
+  visible,
+  onClose,
+  onPlayTutorial,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onPlayTutorial: () => void;
+}) {
   const [pageWidth, setPageWidth] = useState(0);
   const [pageIndex, setPageIndex] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
@@ -89,6 +170,11 @@ export function HowToPlayModal({ visible, onClose }: { visible: boolean; onClose
     setPageIndex(0);
     scrollRef.current?.scrollTo({ x: 0, animated: false });
     onClose();
+  };
+
+  const playTutorial = () => {
+    close();
+    onPlayTutorial();
   };
 
   return (
@@ -114,15 +200,21 @@ export function HowToPlayModal({ visible, onClose }: { visible: boolean; onClose
                 showsHorizontalScrollIndicator={false}
                 onMomentumScrollEnd={onScrollEnd}
               >
-                {PAGES.map((page) => (
-                  <View key={page.title} style={[styles.page, { width: pageWidth }]}>
-                    <Text style={styles.pageEmoji}>{page.emoji}</Text>
+                {PAGES.map((page, i) => (
+                  <View key={i} style={[styles.page, { width: pageWidth }]}>
+                    <PageIllustration
+                      illustration={page.illustration}
+                      width={pageWidth - 16}
+                      active={Math.abs(i - pageIndex) <= 1}
+                    />
                     <Text style={styles.pageTitle}>{page.title}</Text>
-                    {page.lines.map((line, i) => (
-                      <Text key={i} style={styles.pageLine}>
-                        {line}
-                      </Text>
-                    ))}
+                    <ScrollView style={styles.pageTextScroll}>
+                      {page.lines.map((line, li) => (
+                        <Text key={li} style={styles.pageLine}>
+                          {line}
+                        </Text>
+                      ))}
+                    </ScrollView>
                   </View>
                 ))}
               </ScrollView>
@@ -131,9 +223,13 @@ export function HowToPlayModal({ visible, onClose }: { visible: boolean; onClose
 
           <View style={styles.dots}>
             {PAGES.map((page, i) => (
-              <View key={page.title} style={[styles.dot, i === pageIndex && styles.dotActive]} />
+              <View key={i} style={[styles.dot, i === pageIndex && styles.dotActive]} />
             ))}
           </View>
+
+          <Pressable onPress={playTutorial} style={styles.tutorialLink}>
+            <Text style={styles.tutorialLinkLabel}>Play the tutorial ›</Text>
+          </Pressable>
 
           <Pressable
             onPress={() => (lastPage ? close() : goTo(pageIndex + 1))}
@@ -158,6 +254,7 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 420,
+    maxHeight: '85%',
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
     paddingVertical: 18,
@@ -171,16 +268,19 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 22, fontWeight: '900', color: '#3B2A1A' },
   closeButton: { position: 'absolute', right: 0 },
   closeLabel: { fontSize: 18, fontWeight: '800', color: '#8A7358' },
-  carousel: { marginTop: 10, height: 240 },
-  page: { alignItems: 'center', paddingHorizontal: 8, paddingTop: 8 },
-  pageEmoji: { fontSize: 44 },
+  carousel: { marginTop: 10, height: 300 },
+  page: { alignItems: 'center', paddingHorizontal: 8, paddingTop: 8, flex: 1 },
+  controlsIllustration: { height: 120, alignItems: 'center', justifyContent: 'center' },
+  dpadScale: { transform: [{ scale: 0.7 }] },
+  swipeCaption: { fontSize: 13, fontWeight: '700', color: '#8A7358', marginTop: -6 },
   pageTitle: { fontSize: 19, fontWeight: '800', color: '#3B2A1A', marginTop: 8 },
+  pageTextScroll: { marginTop: 6, alignSelf: 'stretch' },
   pageLine: {
     fontSize: 14.5,
     lineHeight: 21,
     color: '#4A362A',
     textAlign: 'center',
-    marginTop: 10,
+    marginTop: 6,
   },
   dots: {
     flexDirection: 'row',
@@ -195,8 +295,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#D9CBB5',
   },
   dotActive: { backgroundColor: '#3B2A1A' },
+  tutorialLink: { alignItems: 'center', marginTop: 10, paddingVertical: 4 },
+  tutorialLinkLabel: { color: '#8A7358', fontSize: 14, fontWeight: '800' },
   nextButton: {
-    marginTop: 14,
+    marginTop: 10,
     backgroundColor: '#3B2A1A',
     borderRadius: 14,
     paddingVertical: 13,
