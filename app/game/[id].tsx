@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
 import {
+  EXIT_STEP_MS,
   HAPTICS_ENABLED,
   HINT_MAX_STATES,
   HINT_MOVES,
@@ -21,7 +22,7 @@ import { LEVELS } from '../../src/game/levels';
 import { starsForClear } from '../../src/game/scoring';
 import { solveState } from '../../src/game/solve';
 import { GameCanvas } from '../../src/render/GameCanvas';
-import { buildActionTimelines } from '../../src/render/scene';
+import { buildActionTimelines, exitDurationMs } from '../../src/render/scene';
 import { useGameStore } from '../../src/store/gameStore';
 import { useProgressStore } from '../../src/store/progressStore';
 import { DPad } from '../../src/ui/DPad';
@@ -50,6 +51,7 @@ export default function GameScreen() {
   const won = useGameStore((s) => s.won);
   const feedback = useGameStore((s) => s.feedback);
   const feedbackTick = useGameStore((s) => s.feedbackTick);
+  const exited = useGameStore((s) => s.exited);
   const loadLevel = useGameStore((s) => s.loadLevel);
   const dispatch = useGameStore((s) => s.dispatch);
   const undo = useGameStore((s) => s.undo);
@@ -63,6 +65,7 @@ export default function GameScreen() {
   const [deadFlash, setDeadFlash] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [helpVisible, setHelpVisible] = useState(false);
+  const [showClear, setShowClear] = useState(false);
 
   const buzz = useCallback(
     (fn: () => Promise<unknown>) => {
@@ -122,8 +125,13 @@ export default function GameScreen() {
       }
       if (ev.includes('spawned')) playSfx('door', soundEnabled);
       if (ev.includes('dogExited')) {
-        playSfx('bark', soundEnabled);
-        buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+        // The bark lands when the head actually reaches the door.
+        timers.push(
+          setTimeout(() => {
+            playSfx('bark', soundEnabled);
+            buzz(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+          }, EXIT_STEP_MS),
+        );
       } else if (ev.includes('fell')) {
         // Play the thud when the fall tween actually lands, not at move time.
         const landAt = Math.max(0, ...timelines.map((tl) => tl.landAt));
@@ -134,22 +142,34 @@ export default function GameScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedback, feedbackTick, buzz]);
 
-  // On win: persist stars, then hand off to the level-clear screen
-  // (delayed so the confetti + happy bark get their moment).
+  // On win: persist stars immediately, but let the winning dog finish
+  // walking into the door before showing the clear card, playing the
+  // success haptic, and handing off to the level-clear screen.
   const clearedRef = useRef(false);
   useEffect(() => {
     if (!won || !level || clearedRef.current) return;
     clearedRef.current = true;
-    buzz(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
     recordClear(level.id, starsForClear(moveCount, level.par));
-    const t = setTimeout(() => {
-      router.replace(`/clear/${level.id}?moves=${moveCount}`);
-    }, WIN_NAVIGATE_MS);
-    return () => clearTimeout(t);
+    const walk = exited ? exitDurationMs(exited.cells.length) : 0;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    timers.push(
+      setTimeout(() => {
+        setShowClear(true);
+        buzz(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
+      }, walk),
+    );
+    timers.push(
+      setTimeout(() => {
+        router.replace(`/clear/${level.id}?moves=${moveCount}`);
+      }, walk + WIN_NAVIGATE_MS),
+    );
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [won, level, moveCount, recordClear, router, buzz]);
 
   useEffect(() => {
     clearedRef.current = false;
+    setShowClear(false);
   }, [id]);
 
   const onMove = useCallback((dir: Dir) => dispatch(dir), [dispatch]);
@@ -232,6 +252,7 @@ export default function GameScreen() {
               feedback={feedback}
               feedbackTick={feedbackTick}
               won={won}
+              exited={exited}
             />
           )}
           {deadFlash && (
@@ -260,7 +281,7 @@ export default function GameScreen() {
 
       <HowToPlayModal visible={helpVisible} onClose={() => setHelpVisible(false)} />
 
-      {won && (
+      {showClear && (
         <View style={styles.overlay} pointerEvents="none">
           <View style={styles.clearCard}>
             <Text style={styles.clearTitle}>Cleared!</Text>

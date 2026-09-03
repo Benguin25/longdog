@@ -74,8 +74,15 @@ export const DUST_COUNT = 8;
 export const WIN_FX_MS = 1600;
 export const CONFETTI_COUNT = 36;
 
-/** Delay before leaving the game screen after a clear (lets confetti play). */
+/** Delay after the exit walk finishes before leaving the game screen
+ *  (lets confetti play). */
 export const WIN_NAVIGATE_MS = 1250;
+
+/** Exit walk: ms per segment step into the door. */
+export const EXIT_STEP_MS = 110;
+
+/** Exit walk: door light burst + bump duration. */
+export const EXIT_BURST_MS = 420;
 
 /** Tail-wag cycle when idle at an open exit / ear-flap sizes. */
 export const WAG_CYCLE_MS = 360;
@@ -157,6 +164,16 @@ export const PACK_PALETTES: readonly PackPalette[] = [
   },
 ];
 
+/** A cosmetic dog coat: the three colors that make up a dachshund's skin. */
+export interface CoatColors {
+  readonly body: string;
+  readonly belly: string;
+  readonly ear: string;
+}
+
+/** Head accessory cosmetics (one equipped at a time, or none). */
+export type AccessoryId = 'bandana' | 'bow' | 'party-hat' | 'sunglasses' | 'crown';
+
 /** Shared palette (bright, saturated, thick-outline cartoon look). */
 export const COLORS = {
   outline: '#2B1B10',
@@ -208,3 +225,10 @@ export const COLORS = {
   rewind: '#FFFFFF',
   confetti: ['#FF5A5A', '#FFD542', '#5FBF4A', '#5AA9FF', '#C77DFF', '#FF9A3D'],
 } as const;
+
+/** The default (free, always-owned) coat — today's colors. */
+export const DEFAULT_COAT: CoatColors = {
+  body: COLORS.dogBody,
+  belly: COLORS.dogBelly,
+  ear: COLORS.dogEar,
+};

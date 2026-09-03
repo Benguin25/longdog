@@ -29,7 +29,7 @@
 //   replays two pictures instead of re-walking dozens of Path nodes.
 // - Burst effects (dust, confetti, statue wash) mount only while active.
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Canvas,
   Circle,
@@ -58,10 +58,13 @@ import {
   CONFETTI_COUNT,
   CORNER_RADIUS_FRAC,
   DEATH_FX_MS,
+  DEFAULT_COAT,
   DOOR_OPEN_MS,
   DUST_COUNT,
   EAR_FLAP_RADIANS,
+  EXIT_BURST_MS,
   EXIT_PULSE_MS,
+  EXIT_STEP_MS,
   GROW_TWEEN_MS,
   MOVE_TWEEN_MS,
   MUNCH_MS,
@@ -74,12 +77,15 @@ import {
   WAG_CYCLE_MS,
   WAG_RADIANS,
   WIN_FX_MS,
+  type AccessoryId,
+  type CoatColors,
   type PackPalette,
 } from '../game/config';
 import {
   isExitOpen,
   type Cell,
   type Dir,
+  type Dog,
   type FallEats,
   type FallRows,
   type GameState,
@@ -91,6 +97,8 @@ import {
 } from './pictures';
 import {
   buildActionTimelines,
+  buildExitTimeline,
+  exitDurationMs,
   hash01,
   newStatueCells,
   segmentGrounded,
@@ -118,10 +126,12 @@ function ExitDoor({
   state,
   layout,
   pulse,
+  bump,
 }: {
   state: GameState;
   layout: Layout;
   pulse: SharedValue<number>;
+  bump: SharedValue<number>;
 }) {
   const t = layout.tile;
   const open = isExitOpen(state);
@@ -132,6 +142,17 @@ function ExitDoor({
   useEffect(() => {
     openSv.value = withTiming(open ? 1 : 0, { duration: 320, easing: Easing.out(Easing.cubic) });
   }, [open, openSv]);
+
+  // Bump scale around the door center (idle at 1) on exit burst.
+  const cx = x0 + t / 2;
+  const cy = y0 + t / 2;
+  const bumpTf = useDerivedValue(() => [
+    { translateX: cx },
+    { translateY: cy },
+    { scale: bump.value },
+    { translateX: -cx },
+    { translateY: -cy },
+  ]);
 
   const glowR = useDerivedValue(() => t * (0.58 + 0.12 * pulse.value) * openSv.value);
   const glowR2 = useDerivedValue(() => t * (0.85 + 0.18 * pulse.value) * openSv.value);
@@ -147,7 +168,7 @@ function ExitDoor({
   ]);
 
   return (
-    <Group>
+    <Group transform={bumpTf}>
       <Circle cx={x0 + t / 2} cy={y0 + t / 2} r={glowR2} color={COLORS.exitGlow} opacity={glowO2} />
       <Circle cx={x0 + t / 2} cy={y0 + t / 2} r={glowR} color={COLORS.exitGlow} opacity={glowO} />
       <RoundedRect
@@ -179,6 +200,25 @@ function ExitDoor({
       </Group>
     </Group>
   );
+}
+
+/** Door light burst: a growing/fading glow circle timed to the head's
+ *  arrival at the doorway (EXIT_STEP_MS into the exit walk). */
+function DoorBurst({ layout, exit }: { layout: Layout; exit: Cell }) {
+  const t = layout.tile;
+  const v = useSharedValue(0);
+  useEffect(() => {
+    v.value = withDelay(
+      EXIT_STEP_MS,
+      withTiming(1, { duration: EXIT_BURST_MS, easing: Easing.out(Easing.quad) }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const cx = px(layout, exit.x) + t / 2;
+  const cy = py(layout, exit.y) + t / 2;
+  const r = useDerivedValue(() => t * (0.4 + 1.3 * v.value));
+  const o = useDerivedValue(() => 0.75 * (1 - v.value));
+  return <Circle cx={cx} cy={cy} r={r} color={COLORS.exitGlow} opacity={o} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +316,9 @@ interface DogViewProps {
   stateRef: GameState;
   moveClock: SharedValue<number>;
   wag: SharedValue<number>;
+  /** Equipped cosmetics (only visible on the active dog). */
+  coat: CoatColors;
+  accessory: AccessoryId | null;
 }
 
 /** Keyframe → the withTiming leg that plays it (fall legs ease in). */
@@ -291,13 +334,14 @@ function legAnim(k: Keyframe, target: number) {
  * component by `${dog.id}:${cells.length}` — any length change remounts.
  */
 function DogView({
-  cells, grounded, timeline, active, exitOpen, layout, stateRef, moveClock, wag,
+  cells, grounded, timeline, active, exitOpen, layout, stateRef, moveClock, wag, coat, accessory,
 }: DogViewProps) {
   const t = layout.tile;
   const n = cells.length;
   const half = t / 2;
-  const body = active ? COLORS.dogBody : COLORS.dogInactive;
-  const earColor = active ? COLORS.dogEar : COLORS.dogInactiveEar;
+  const body = active ? coat.body : COLORS.dogInactive;
+  const earColor = active ? coat.ear : COLORS.dogInactiveEar;
+  const bellyColor = active ? coat.belly : COLORS.dogBelly;
 
   // Per-segment animated pixel origin (top-left), seeded at the timeline's
   // start position on mount. All interpolation below happens on the UI thread.
@@ -340,6 +384,13 @@ function DogView({
         pops[i].value = withDelay(
           pop,
           withTiming(1, { duration: GROW_TWEEN_MS, easing: Easing.out(Easing.quad) }),
+        );
+      }
+      const vanish = timeline.vanishAt[i];
+      if (vanish !== null) {
+        pops[i].value = withDelay(
+          vanish,
+          withTiming(0, { duration: GROW_TWEEN_MS, easing: Easing.in(Easing.quad) }),
         );
       }
     }
@@ -527,7 +578,7 @@ function DogView({
           {/* Belly highlight. */}
           <RoundedRect
             x={t * 0.28} y={t * 0.56} width={t * 0.44} height={t * 0.2} r={t * 0.1}
-            color={COLORS.dogBelly} opacity={0.55}
+            color={bellyColor} opacity={0.55}
           />
         </Group>
       ))}
@@ -546,7 +597,7 @@ function DogView({
         />
         <RoundedRect
           x={t * 0.62} y={t * 0.42} width={t * 0.48} height={t * 0.28} r={t * 0.13}
-          color={COLORS.dogBelly}
+          color={bellyColor}
         />
         <Group transform={jawTf}>
           <RoundedRect x={t * 0.72} y={t * 0.66} width={t * 0.26} height={t * 0.16} r={t * 0.07} color={COLORS.outline} />
@@ -573,9 +624,123 @@ function DogView({
           </Group>
         ))}
         <Circle cx={t * 0.3} cy={t * 0.56} r={t * 0.05} color={COLORS.blush} opacity={0.55} />
+
+        {active && renderAccessory(accessory, t, ow)}
       </Group>
     </Group>
   );
+}
+
+/** One head-local accessory drawing, drawn after the eyes (local space
+ *  faces right, t = tile). Returns null for no accessory. */
+function renderAccessory(accessory: AccessoryId | null, t: number, ow: number) {
+  if (!accessory) return null;
+  switch (accessory) {
+    case 'bandana': {
+      const path = `M${t * 0.02} ${t * 0.5}L${t * 0.34} ${t * 0.5}L${t * 0.16} ${t * 0.9}Z`;
+      return (
+        <Group key="acc">
+          <Path path={path} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.6} strokeJoin="round" />
+          <Path path={path} color="#D9534F" />
+        </Group>
+      );
+    }
+    case 'bow': {
+      const cx = t * 0.3;
+      const cy = t * 0.06;
+      const ew = t * 0.2;
+      const eh = t * 0.14;
+      return (
+        <Group key="acc">
+          {[-1, 1].map((side) => (
+            <Group key={side}>
+              <RoundedRect
+                x={cx + side * ew * 0.55 - ew / 2} y={cy - eh / 2} width={ew} height={eh} r={eh * 0.45}
+                color={COLORS.outline} style="stroke" strokeWidth={ow * 0.5}
+              />
+              <RoundedRect
+                x={cx + side * ew * 0.55 - ew / 2} y={cy - eh / 2} width={ew} height={eh} r={eh * 0.45}
+                color="#F27D93"
+              />
+            </Group>
+          ))}
+          <Circle cx={cx} cy={cy} r={t * 0.05} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.5} />
+          <Circle cx={cx} cy={cy} r={t * 0.05} color="#F27D93" />
+        </Group>
+      );
+    }
+    case 'party-hat': {
+      const apex = { x: t * 0.42, y: -t * 0.38 };
+      const baseL = { x: t * 0.18, y: t * 0.14 };
+      const baseR = { x: t * 0.66, y: t * 0.14 };
+      const path = `M${apex.x} ${apex.y}L${baseR.x} ${baseR.y}L${baseL.x} ${baseL.y}Z`;
+      return (
+        <Group key="acc">
+          <Path path={path} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.6} strokeJoin="round" />
+          <Path path={path} color="#5AA9FF" />
+          <Line
+            p1={{ x: apex.x - t * 0.04, y: apex.y + t * 0.18 }}
+            p2={{ x: baseL.x + t * 0.08, y: baseL.y - t * 0.02 }}
+            color="#FFD542" style="stroke" strokeWidth={t * 0.06}
+          />
+          <Line
+            p1={{ x: apex.x + t * 0.04, y: apex.y + t * 0.18 }}
+            p2={{ x: baseR.x - t * 0.08, y: baseR.y - t * 0.02 }}
+            color="#FFD542" style="stroke" strokeWidth={t * 0.06}
+          />
+          <Circle cx={apex.x} cy={apex.y} r={t * 0.07} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.5} />
+          <Circle cx={apex.x} cy={apex.y} r={t * 0.07} color="#FFFFFF" />
+        </Group>
+      );
+    }
+    case 'sunglasses': {
+      const lw = t * 0.3;
+      const lh = t * 0.2;
+      const c1 = { x: t * 0.3, y: t * 0.34 };
+      const c2 = { x: t * 0.58, y: t * 0.34 };
+      return (
+        <Group key="acc">
+          <Line
+            p1={{ x: c1.x + lw / 2, y: c1.y }} p2={{ x: c2.x - lw / 2, y: c2.y }}
+            color="#231512" style="stroke" strokeWidth={t * 0.03}
+          />
+          {[c1, c2].map((c, i) => (
+            <Group key={i}>
+              <RoundedRect
+                x={c.x - lw / 2} y={c.y - lh / 2} width={lw} height={lh} r={lh * 0.35}
+                color={COLORS.outline} style="stroke" strokeWidth={ow * 0.5}
+              />
+              <RoundedRect x={c.x - lw / 2} y={c.y - lh / 2} width={lw} height={lh} r={lh * 0.35} color="#231512" />
+              <RoundedRect
+                x={c.x - lw * 0.28} y={c.y - lh * 0.28} width={lw * 0.22} height={lh * 0.22} r={lh * 0.08}
+                color="#FFFFFF" opacity={0.55}
+              />
+            </Group>
+          ))}
+        </Group>
+      );
+    }
+    case 'crown': {
+      const y0 = t * 0.02;
+      const yTop = -t * 0.24;
+      const yBand = y0 + t * 0.1;
+      const x0c = t * 0.12;
+      const x1c = t * 0.72;
+      const w = x1c - x0c;
+      const path =
+        `M${x0c} ${yBand}L${x0c} ${y0}L${x0c + w * 0.17} ${yTop}L${x0c + w * 0.33} ${y0}` +
+        `L${x0c + w * 0.5} ${yTop}L${x0c + w * 0.67} ${y0}L${x0c + w * 0.83} ${yTop}` +
+        `L${x1c} ${y0}L${x1c} ${yBand}Z`;
+      return (
+        <Group key="acc">
+          <Path path={path} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.6} strokeJoin="round" />
+          <Path path={path} color="#FFD542" />
+          <Circle cx={x0c + w * 0.5} cy={yTop + t * 0.06} r={t * 0.045} color={COLORS.outline} style="stroke" strokeWidth={ow * 0.4} />
+          <Circle cx={x0c + w * 0.5} cy={yTop + t * 0.06} r={t * 0.045} color="#D9534F" />
+        </Group>
+      );
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -583,7 +748,11 @@ function DogView({
 // ---------------------------------------------------------------------------
 
 /** Grey wash fading IN over freshly petrified cells (dog color fades out). */
-function StatueWash({ cells, layout }: { cells: readonly Cell[]; layout: Layout }) {
+function StatueWash({
+  cells, layout, color,
+}: {
+  cells: readonly Cell[]; layout: Layout; color: string;
+}) {
   const t = layout.tile;
   const v = useSharedValue(0);
   useEffect(() => {
@@ -596,7 +765,7 @@ function StatueWash({ cells, layout }: { cells: readonly Cell[]; layout: Layout 
         <RoundedRect
           key={`${c.x},${c.y}`}
           x={px(layout, c.x) + t * 0.05} y={py(layout, c.y) + t * 0.05}
-          width={t * 0.9} height={t * 0.9} r={t * 0.22} color={COLORS.dogBody}
+          width={t * 0.9} height={t * 0.9} r={t * 0.22} color={color}
         />
       ))}
     </Group>
@@ -647,15 +816,18 @@ function DeathFx({
   );
 }
 
-/** Confetti burst on level clear. */
-function Confetti({ width, height }: { width: number; height: number }) {
+/** Confetti burst on level clear. `delayMs` holds it invisible (e.g. while
+ *  the winning dog is still walking into the door). */
+function Confetti({ width, height, delayMs = 0 }: { width: number; height: number; delayMs?: number }) {
   const v = useSharedValue(0);
   useEffect(() => {
-    v.value = withTiming(1, { duration: WIN_FX_MS, easing: Easing.linear });
-  }, [v]);
+    v.value = withDelay(delayMs, withTiming(1, { duration: WIN_FX_MS, easing: Easing.linear }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const groupOpacity = useDerivedValue(() => (v.value === 0 ? 0 : 1));
 
   return (
-    <Group>
+    <Group opacity={groupOpacity}>
       {Array.from({ length: CONFETTI_COUNT }, (_, i) => {
         const x0 = width * hash01(i, 71);
         const fall = 0.75 + 0.6 * hash01(i, 72);
@@ -697,6 +869,11 @@ export function GameCanvas({
   feedback,
   feedbackTick,
   won,
+  exited = null,
+  highlight = [],
+  coat = DEFAULT_COAT,
+  accessory = null,
+  palette,
 }: {
   state: GameState;
   prevState: GameState | null;
@@ -708,14 +885,23 @@ export function GameCanvas({
   feedback: Feedback;
   feedbackTick: number;
   won: boolean;
+  /** The dog that just walked out the exit this action, if any. */
+  exited?: Dog | null;
+  /** Cells to draw a pulsing highlight ring on (used by the tutorial). */
+  highlight?: readonly Cell[];
+  coat?: CoatColors;
+  accessory?: AccessoryId | null;
+  /** Overrides PACK_PALETTES[pack] when present (equipped theme). */
+  palette?: PackPalette;
 }) {
-  const pal = PACK_PALETTES[((pack % PACK_PALETTES.length) + PACK_PALETTES.length) % PACK_PALETTES.length];
+  const pal = palette ?? PACK_PALETTES[((pack % PACK_PALETTES.length) + PACK_PALETTES.length) % PACK_PALETTES.length];
 
   const moveClock = useSharedValue(1);
   const pulse = useSharedValue(0);
   const wag = useSharedValue(0);
   const door = useSharedValue(0);
   const shake = useSharedValue(1);
+  const bump = useSharedValue(1);
 
   // Cosmetic per-move clock (ear flap). Restarted during render for the
   // same no-flash reason as the segment retarget in DogView.
@@ -755,8 +941,45 @@ export function GameCanvas({
         withDelay(DOOR_OPEN_MS - 550, withTiming(0, { duration: 330, easing: Easing.in(Easing.quad) })),
       );
     }
+    if (ev.includes('dogExited')) {
+      bump.value = 1;
+      bump.value = withDelay(
+        EXIT_STEP_MS,
+        withSequence(
+          withTiming(1.12, { duration: EXIT_BURST_MS / 2, easing: Easing.out(Easing.quad) }),
+          withTiming(1, { duration: EXIT_BURST_MS / 2, easing: Easing.in(Easing.quad) }),
+        ),
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedbackTick]);
+
+  // Dogs currently walking into the exit (in-flight; may include one whose
+  // move also won the level). Each entry is removed once its walk finishes,
+  // and never rendered if the player has since undone the exit.
+  const [exits, setExits] = useState<{ id: number; cells: readonly Cell[]; tick: number }[]>([]);
+  const exitTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  useEffect(() => {
+    if (!exited) return;
+    const tick = feedbackTick;
+    setExits((xs) => [...xs, { id: exited.id, cells: exited.cells, tick }]);
+    const timer = setTimeout(() => {
+      setExits((xs) => xs.filter((x) => x.tick !== tick));
+      exitTimers.current.delete(tick);
+    }, exitDurationMs(exited.cells.length));
+    exitTimers.current.set(tick, timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exited, feedbackTick]);
+  useEffect(
+    () => () => {
+      exitTimers.current.forEach(clearTimeout);
+    },
+    [],
+  );
+  // A player undo brings the dog back onto the board — stop drawing its
+  // in-flight exit view immediately rather than waiting out the timer.
+  const liveDogIds = useMemo(() => new Set(state.dogs.map((d) => d.id)), [state.dogs]);
+  const visibleExits = exits.filter((e) => !liveDogIds.has(e.id));
 
   // Board shake on death (identity when idle: shake rests at 1).
   const rootTf = useDerivedValue(() => [
@@ -796,6 +1019,8 @@ export function GameCanvas({
   const boardW = layout.tile * state.width + BOARD_MARGIN * 2;
   const boardH = layout.tile * state.height + BOARD_MARGIN * 2;
   const deadDog = feedback.kind === 'dead' ? state.dogs[state.activeDog] : undefined;
+  // Confetti waits out the exit walk on the winning move.
+  const winDelay = won && exited ? exitDurationMs(exited.cells.length) : 0;
 
   return (
     <Canvas style={{ width, height }}>
@@ -803,13 +1028,17 @@ export function GameCanvas({
       <Picture picture={skyPicture} />
 
       <Group transform={rootTf}>
-        <ExitDoor state={state} layout={layout} pulse={pulse} />
+        <ExitDoor state={state} layout={layout} pulse={pulse} bump={bump} />
         <DogHouse state={state} layout={layout} door={door} />
 
         {/* Board frame + terrain + snacks (static picture, occludes doors). */}
         <Picture picture={boardPicture} />
 
-        {washCells.length > 0 && <StatueWash key={`wash${feedbackTick}`} cells={washCells} layout={layout} />}
+        {washCells.length > 0 && (
+          <StatueWash key={`wash${feedbackTick}`} cells={washCells} layout={layout} color={coat.body} />
+        )}
+
+        {visibleExits.map((ex) => <DoorBurst key={`burst${ex.tick}`} layout={layout} exit={state.exit} />)}
 
         {state.dogs.map((dog, di) => {
           const grounded = dog.cells.map((c) => segmentGrounded(state, c));
@@ -827,9 +1056,30 @@ export function GameCanvas({
               stateRef={state}
               moveClock={moveClock}
               wag={wag}
+              coat={coat}
+              accessory={accessory}
             />
           );
         })}
+
+        {/* Dogs walking whole into the exit door — drawn last so they sit on
+         *  top of everything else while they disappear inside. */}
+        {visibleExits.map((ex) => (
+          <DogView
+            key={`exit-${ex.tick}`}
+            cells={ex.cells}
+            grounded={ex.cells.map(() => false)}
+            timeline={buildExitTimeline(ex.cells, state.exit)}
+            active={true}
+            exitOpen={false}
+            layout={layout}
+            stateRef={state}
+            moveClock={moveClock}
+            wag={wag}
+            coat={coat}
+            accessory={accessory}
+          />
+        ))}
 
         {deadDog && (
           <DeathFx
@@ -841,9 +1091,62 @@ export function GameCanvas({
             boardH={boardH}
           />
         )}
+
+        <HighlightRing cells={highlight} layout={layout} pulse={pulse} />
       </Group>
 
-      {won && <Confetti key="confetti" width={width} height={height} />}
+      {won && <Confetti key="confetti" width={width} height={height} delayMs={winDelay} />}
     </Canvas>
+  );
+}
+
+/** Pulsing ring drawn over cells the tutorial wants to point at. */
+function HighlightRing({
+  cells,
+  layout,
+  pulse,
+}: {
+  cells: readonly Cell[];
+  layout: Layout;
+  pulse: SharedValue<number>;
+}) {
+  return (
+    <>
+      {cells.map((c) => (
+        <HighlightCell key={`${c.x},${c.y}`} cell={c} layout={layout} pulse={pulse} />
+      ))}
+    </>
+  );
+}
+
+function HighlightCell({
+  cell,
+  layout,
+  pulse,
+}: {
+  cell: Cell;
+  layout: Layout;
+  pulse: SharedValue<number>;
+}) {
+  const t = layout.tile;
+  const cx = px(layout, cell.x) + t / 2;
+  const cy = py(layout, cell.y) + t / 2;
+  const tf = useDerivedValue(() => {
+    const s = 1.02 + 0.08 * pulse.value;
+    return [
+      { translateX: cx },
+      { translateY: cy },
+      { scale: s },
+      { translateX: -t / 2 },
+      { translateY: -t / 2 },
+    ];
+  });
+  return (
+    <Group transform={tf}>
+      <RoundedRect
+        x={0} y={0} width={t} height={t} r={t * CORNER_RADIUS_FRAC}
+        color="#FFFFFF" style="stroke" strokeWidth={t * 0.09} opacity={0.9}
+      />
+    </Group>
   );
 }

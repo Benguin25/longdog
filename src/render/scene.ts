@@ -9,6 +9,7 @@
 import type { Cell, FallEats, FallRows, GameState } from '../game/rules';
 import { cellKey } from '../game/rules';
 import {
+  EXIT_STEP_MS,
   FALL_MAX_MS,
   FALL_MIN_MS,
   FALL_MS_PER_ROW,
@@ -328,12 +329,13 @@ export function fallDurationMs(rows: number): number {
 // Per-dog action timeline (pure; consumed by the dog view and the SFX cues)
 // ---------------------------------------------------------------------------
 
-/** One leg of a segment's tween, in grid units. `fall` legs ease in. */
+/** One leg of a segment's tween, in grid units. `fall` legs ease in. `enter`
+ *  is a step that ends inside the exit door. */
 export interface Keyframe {
   readonly x: number;
   readonly y: number;
   readonly ms: number;
-  readonly kind: 'step' | 'fall' | 'hold';
+  readonly kind: 'step' | 'fall' | 'hold' | 'enter';
 }
 
 export interface DogTimeline {
@@ -350,6 +352,11 @@ export interface DogTimeline {
   readonly eatAt: readonly number[];
   /** ms at which the dog comes to rest after falling (0 if it did not fall). */
   readonly landAt: number;
+  /**
+   * Per final segment: ms at which it shrinks to scale 0 because it walked
+   * through the exit door, or null if it never does this action.
+   */
+  readonly vanishAt: readonly (number | null)[];
   readonly totalMs: number;
 }
 
@@ -455,7 +462,52 @@ export function buildDogTimeline(
 
   const totalMs = tracks.length > 0 ? tracks[0].reduce((a, k) => a + k.ms, 0) : 0;
   const landAt = fallRows > 0 ? totalMs : 0;
-  return { from, tracks, popAt, eatAt, landAt, totalMs };
+  const vanishAt: (number | null)[] = cells.map(() => null);
+  return { from, tracks, popAt, eatAt, landAt, vanishAt, totalMs };
+}
+
+// ---------------------------------------------------------------------------
+// Exit-walk timeline: a dog stepping into the door segment by segment
+// ---------------------------------------------------------------------------
+
+/** Total duration of the exit walk for a dog of `segmentCount` segments. */
+export function exitDurationMs(segmentCount: number): number {
+  return (segmentCount + 1) * EXIT_STEP_MS;
+}
+
+/**
+ * Timeline for a dog walking whole into the open exit: the head enters
+ * first, then each following segment, one step at a time, until the tail
+ * disappears inside. `preCells` are the dog's pre-move cells (head first).
+ */
+export function buildExitTimeline(preCells: readonly Cell[], exit: Cell): DogTimeline {
+  const n = preCells.length;
+  const chain: readonly Cell[] = [exit, ...preCells];
+  const from: Cell[] = [];
+  const tracks: Keyframe[][] = [];
+  const popAt: (number | null)[] = [];
+  const vanishAt: (number | null)[] = [];
+
+  for (let i = 0; i < n; i++) {
+    from.push(chain[i + 1]);
+    popAt.push(null);
+    vanishAt.push((i + 1) * EXIT_STEP_MS);
+
+    const track: Keyframe[] = [];
+    for (let s = 1; s <= n + 1; s++) {
+      const k = i + 1 - s;
+      if (k >= 1) {
+        track.push({ x: chain[k].x, y: chain[k].y, ms: EXIT_STEP_MS, kind: 'step' });
+      } else if (k === 0) {
+        track.push({ x: exit.x, y: exit.y, ms: EXIT_STEP_MS, kind: 'enter' });
+      } else {
+        track.push({ x: exit.x, y: exit.y, ms: EXIT_STEP_MS, kind: 'hold' });
+      }
+    }
+    tracks.push(track);
+  }
+
+  return { from, tracks, popAt, eatAt: [], landAt: 0, vanishAt, totalMs: exitDurationMs(n) };
 }
 
 /** Timeline for every dog in `state`, keyed by dog id. */

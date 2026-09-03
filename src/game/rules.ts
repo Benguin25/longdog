@@ -105,6 +105,10 @@ export type MoveResult =
       readonly events: readonly GameEvent[];
       readonly fallRows: FallRows;
       readonly fallEats: FallEats;
+      /** The dog that just exited (pre-move cells), if this move opened the
+       *  door onto it. Presentational hint only: state already reflects the
+       *  removal. */
+      readonly exited?: Dog;
     }
   | {
       readonly status: 'won';
@@ -112,6 +116,7 @@ export type MoveResult =
       readonly events: readonly GameEvent[];
       readonly fallRows: FallRows;
       readonly fallEats: FallEats;
+      readonly exited?: Dog;
     }
   | { readonly status: 'blocked' }
   | { readonly status: 'dead'; readonly cause: DeathCause };
@@ -300,6 +305,7 @@ function finishAction(
     statues?: ReadonlySet<string>;
     activeDog?: number;
     nextDogId?: number;
+    exited?: Dog;
   },
   events: GameEvent[],
 ): MoveResult {
@@ -337,8 +343,8 @@ function finishAction(
     activeDog: active,
   };
 
-  if (isWon(next)) return { status: 'won', state: next, events, fallRows, fallEats };
-  return { status: 'moved', state: next, events, fallRows, fallEats };
+  if (isWon(next)) return { status: 'won', state: next, events, fallRows, fallEats, exited: patch.exited };
+  return { status: 'moved', state: next, events, fallRows, fallEats, exited: patch.exited };
 }
 
 // ---------------------------------------------------------------------------
@@ -387,7 +393,12 @@ export function move(state: GameState, dir: Dir): MoveResult {
   if (sameCell(target, state.exit) && snacks.length === 0) {
     events.push('dogExited');
     const remaining = state.dogs.filter((_, i) => i !== state.activeDog);
-    return finishAction(state, remaining, { snacks, activeDog: state.activeDog }, events);
+    return finishAction(
+      state,
+      remaining,
+      { snacks, activeDog: state.activeDog, exited: dog },
+      events,
+    );
   }
 
   const newCells: Cell[] = grew
