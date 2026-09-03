@@ -41,6 +41,7 @@ export default function Home() {
   const hydrated = useProgressStore((s) => s.hydrated);
   const tutorialPrompted = useProgressStore((s) => s.tutorialPrompted);
   const tutorialDone = useProgressStore((s) => s.tutorialDone);
+  const biscuits = useProgressStore((s) => s.biscuits);
   const setTutorialPrompted = useProgressStore((s) => s.setTutorialPrompted);
   const [helpVisible, setHelpVisible] = useState(false);
   const [promptVisible, setPromptVisible] = useState(false);
@@ -86,6 +87,7 @@ export default function Home() {
           sub={tutorialDone ? 'Replay' : '5 quick lessons'}
           onPress={() => router.push('/tutorial/1')}
         />
+        <MenuButton label="Shop" sub={`🍪 ${biscuits}`} onPress={() => router.push('/shop')} />
         <MenuButton label="Settings" onPress={() => router.push('/settings')} />
       </View>
       <HowToPlayModal

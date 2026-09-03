@@ -6,7 +6,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
+import { BISCUITS_FIRST_CLEAR, BISCUITS_PER_STAR, BISCUITS_TUTORIAL, SHOP_ITEMS } from '../game/config';
 import { LEVELS } from '../game/levels';
+
+export interface Equipped {
+  coat: string;
+  accessory: string | null;
+  theme: string | null;
+}
+
+const DEFAULT_EQUIPPED: Equipped = { coat: 'classic', accessory: null, theme: null };
 
 interface ProgressStore {
   /** Best star count per level id (absent = never cleared). */
@@ -17,10 +26,22 @@ interface ProgressStore {
   tutorialPrompted: boolean;
   /** True once the player has finished all five tutorial lessons. */
   tutorialDone: boolean;
+  /** Earned currency, spendable in the shop. */
+  biscuits: number;
+  /** Cosmetic item ids the player owns (the free 'classic' coat always is). */
+  owned: string[];
+  equipped: Equipped;
   /** True once AsyncStorage rehydration finished (gates lock rendering). */
   hydrated: boolean;
 
-  recordClear: (levelId: string, stars: number) => void;
+  /** Records a clear's stars and returns the biscuits earned by it. */
+  recordClear: (levelId: string, stars: number) => number;
+  /** Awards BISCUITS_TUTORIAL once, the first time the tutorial is finished. */
+  awardTutorial: () => void;
+  /** Buys and equips a shop item. False if already owned or too poor. */
+  buyItem: (id: string) => boolean;
+  /** Equips an owned item (or unequips accessory/theme with null). */
+  equipItem: (slot: 'coat' | 'accessory' | 'theme', id: string | null) => void;
   setSoundEnabled: (v: boolean) => void;
   setHapticsEnabled: (v: boolean) => void;
   setTutorialPrompted: (v: boolean) => void;
@@ -31,24 +52,74 @@ interface ProgressStore {
 
 export const useProgressStore = create<ProgressStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       stars: {},
       soundEnabled: true,
       hapticsEnabled: true,
       tutorialPrompted: false,
       tutorialDone: false,
+      biscuits: 0,
+      owned: ['classic'],
+      equipped: DEFAULT_EQUIPPED,
       hydrated: false,
 
-      recordClear: (levelId, s) =>
-        set((st) => ({
-          stars: { ...st.stars, [levelId]: Math.max(st.stars[levelId] ?? 0, s) },
-        })),
+      recordClear: (levelId, s) => {
+        const st = get();
+        const prevStars = st.stars[levelId] ?? 0;
+        const earned =
+          (prevStars === 0 ? BISCUITS_FIRST_CLEAR : 0) +
+          Math.max(0, s - prevStars) * BISCUITS_PER_STAR;
+        set({
+          stars: { ...st.stars, [levelId]: Math.max(prevStars, s) },
+          biscuits: st.biscuits + earned,
+        });
+        return earned;
+      },
+
+      awardTutorial: () => {
+        const st = get();
+        if (st.tutorialDone) return;
+        set({ tutorialDone: true, biscuits: st.biscuits + BISCUITS_TUTORIAL });
+      },
+
+      buyItem: (id) => {
+        const item = SHOP_ITEMS.find((i) => i.id === id);
+        if (!item) return false;
+        const st = get();
+        if (st.owned.includes(id) || st.biscuits < item.price) return false;
+        set({
+          biscuits: st.biscuits - item.price,
+          owned: [...st.owned, id],
+          equipped: { ...st.equipped, [item.slot]: id },
+        });
+        return true;
+      },
+
+      equipItem: (slot, id) => {
+        const st = get();
+        if (id === null) {
+          if (slot === 'coat') return; // a coat is always equipped
+          set({ equipped: { ...st.equipped, [slot]: null } });
+          return;
+        }
+        if (!st.owned.includes(id)) return;
+        set({ equipped: { ...st.equipped, [slot]: id } });
+      },
+
       setSoundEnabled: (v) => set({ soundEnabled: v }),
       setHapticsEnabled: (v) => set({ hapticsEnabled: v }),
       setTutorialPrompted: (v) => set({ tutorialPrompted: v }),
       setTutorialDone: (v) => set({ tutorialDone: v }),
       setHydrated: (v) => set({ hydrated: v }),
-      resetProgress: () => set({ stars: {}, tutorialPrompted: false, tutorialDone: false }),
+      resetProgress: () =>
+        set({
+          stars: {},
+          tutorialPrompted: false,
+          tutorialDone: false,
+          biscuits: 0,
+          owned: ['classic'],
+          equipped: DEFAULT_EQUIPPED,
+        }),
     }),
     {
       name: 'longdog-progress',
@@ -59,6 +130,9 @@ export const useProgressStore = create<ProgressStore>()(
         hapticsEnabled: s.hapticsEnabled,
         tutorialPrompted: s.tutorialPrompted,
         tutorialDone: s.tutorialDone,
+        biscuits: s.biscuits,
+        owned: s.owned,
+        equipped: s.equipped,
       }),
       onRehydrateStorage: () => () => {
         useProgressStore.getState().setHydrated(true);

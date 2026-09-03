@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
@@ -11,8 +11,15 @@ import { Stars } from '../../src/ui/Stars';
 
 export default function LevelClear() {
   const router = useRouter();
-  const { id, moves } = useLocalSearchParams<{ id: string; moves?: string }>();
+  const { id, moves, earned } = useLocalSearchParams<{ id: string; moves?: string; earned?: string }>();
   const best = useProgressStore((s) => (id ? s.stars[id] ?? 0 : 0));
+  const earnedBiscuits = Number(earned ?? 0);
+
+  const biscuitScale = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (earnedBiscuits <= 0) return;
+    Animated.spring(biscuitScale, { toValue: 1, useNativeDriver: true, friction: 5 }).start();
+  }, [earnedBiscuits, biscuitScale]);
 
   const level = id ? levelById(id) : undefined;
   if (!level) {
@@ -39,6 +46,11 @@ export default function LevelClear() {
         <View style={styles.starRow}>
           <Stars count={stars} size={44} />
         </View>
+        {earnedBiscuits > 0 && (
+          <Animated.Text style={[styles.biscuits, { transform: [{ scale: biscuitScale }] }]}>
+            +{earnedBiscuits} 🍪 biscuits
+          </Animated.Text>
+        )}
         <Text style={styles.moves}>
           {moveCount} moves{level.par !== undefined ? ` · par ${level.par}` : ''}
         </Text>
@@ -76,6 +88,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 28, fontWeight: '900', color: '#3B2A1A' },
   levelName: { fontSize: 15, color: '#8A7358', marginTop: 4 },
   starRow: { marginVertical: 10 },
+  biscuits: { fontSize: 15, fontWeight: '800', color: '#B07C1F', marginBottom: 4 },
   moves: { fontSize: 15, color: '#4A362A' },
   best: { fontSize: 13, color: '#B07C1F', marginTop: 4 },
   tip: { fontSize: 13, color: '#8A7358', marginTop: 6 },

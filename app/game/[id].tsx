@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
 import {
+  COATS,
   HAPTICS_ENABLED,
   HINT_MAX_STATES,
   HINT_MOVES,
@@ -13,7 +14,9 @@ import {
   SHOW_FPS_OVERLAY,
   SHOW_HINT_BUTTON,
   SWIPE_MIN_DISTANCE,
+  THEMES,
   WIN_NAVIGATE_MS,
+  type AccessoryId,
 } from '../../src/game/config';
 import { initSfx, unloadSfx } from '../../src/audio/sfx';
 import type { Action, Dir } from '../../src/game/rules';
@@ -60,6 +63,7 @@ export default function GameScreen() {
   const hapticsEnabled = useProgressStore((s) => s.hapticsEnabled);
   const soundEnabled = useProgressStore((s) => s.soundEnabled);
   const recordClear = useProgressStore((s) => s.recordClear);
+  const equipped = useProgressStore((s) => s.equipped);
 
   const [board, setBoard] = useState({ w: 0, h: 0 });
   const [hint, setHint] = useState<string | null>(null);
@@ -100,7 +104,7 @@ export default function GameScreen() {
   useEffect(() => {
     if (!won || !level || clearedRef.current) return;
     clearedRef.current = true;
-    recordClear(level.id, starsForClear(moveCount, level.par));
+    const earned = recordClear(level.id, starsForClear(moveCount, level.par));
     const walk = exited ? exitDurationMs(exited.cells.length) : 0;
     const timers: ReturnType<typeof setTimeout>[] = [];
     timers.push(
@@ -111,7 +115,7 @@ export default function GameScreen() {
     );
     timers.push(
       setTimeout(() => {
-        router.replace(`/clear/${level.id}?moves=${moveCount}`);
+        router.replace(`/clear/${level.id}?moves=${moveCount}&earned=${earned}`);
       }, walk + WIN_NAVIGATE_MS),
     );
     return () => timers.forEach(clearTimeout);
@@ -204,6 +208,9 @@ export default function GameScreen() {
               feedbackTick={feedbackTick}
               won={won}
               exited={exited}
+              coat={COATS[equipped.coat] ?? COATS.classic}
+              accessory={equipped.accessory as AccessoryId | null}
+              palette={equipped.theme ? THEMES[equipped.theme] : undefined}
             />
           )}
           {deadFlash && (

@@ -6,7 +6,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 
-import { HAPTICS_ENABLED, SWIPE_MIN_DISTANCE } from '../../src/game/config';
+import { COATS, HAPTICS_ENABLED, SWIPE_MIN_DISTANCE, THEMES, type AccessoryId } from '../../src/game/config';
 import { initSfx, unloadSfx } from '../../src/audio/sfx';
 import { DIRS, type Dir } from '../../src/game/rules';
 import { TUTORIAL_LEVELS } from '../../src/game/levels/tutorial';
@@ -51,7 +51,8 @@ export default function TutorialScreen() {
 
   const hapticsEnabled = useProgressStore((s) => s.hapticsEnabled);
   const soundEnabled = useProgressStore((s) => s.soundEnabled);
-  const setTutorialDone = useProgressStore((s) => s.setTutorialDone);
+  const awardTutorial = useProgressStore((s) => s.awardTutorial);
+  const equipped = useProgressStore((s) => s.equipped);
 
   const { deadFlash } = useGameFeedbackFx({ feedback, feedbackTick, soundEnabled, hapticsEnabled });
 
@@ -108,10 +109,10 @@ export default function TutorialScreen() {
     const walk = exited ? exitDurationMs(exited.cells.length) : 0;
     const t = setTimeout(() => {
       setLessonComplete(true);
-      if (lessonNumber === TUTORIAL_LEVELS.length) setTutorialDone(true);
+      if (lessonNumber === TUTORIAL_LEVELS.length) awardTutorial();
     }, walk);
     return () => clearTimeout(t);
-  }, [won, exited, lessonNumber, setTutorialDone]);
+  }, [won, exited, lessonNumber, awardTutorial]);
 
   const handleInput = useCallback(
     (input: TutorialAllow) => {
@@ -241,6 +242,9 @@ export default function TutorialScreen() {
               won={won}
               exited={exited}
               highlight={highlight}
+              coat={COATS[equipped.coat] ?? COATS.classic}
+              accessory={equipped.accessory as AccessoryId | null}
+              palette={equipped.theme ? THEMES[equipped.theme] : undefined}
             />
           )}
 
