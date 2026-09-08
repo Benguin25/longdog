@@ -28,6 +28,7 @@ import { exitDurationMs } from '../../src/render/scene';
 import { useGameStore } from '../../src/store/gameStore';
 import { useProgressStore } from '../../src/store/progressStore';
 import { DPad } from '../../src/ui/DPad';
+import { DeathChoiceModal } from '../../src/ui/DeathChoiceModal';
 import { FpsOverlay } from '../../src/ui/FpsOverlay';
 import { HowToPlayModal } from '../../src/ui/HowToPlayModal';
 import { HudButton } from '../../src/ui/HudButton';
@@ -69,6 +70,7 @@ export default function GameScreen() {
   const [hint, setHint] = useState<string | null>(null);
   const [helpVisible, setHelpVisible] = useState(false);
   const [resetConfirmVisible, setResetConfirmVisible] = useState(false);
+  const [deathChoicesVisible, setDeathChoicesVisible] = useState(false);
   const [showClear, setShowClear] = useState(false);
 
   const buzz = useCallback(
@@ -80,6 +82,16 @@ export default function GameScreen() {
   );
 
   const { deadFlash } = useGameFeedbackFx({ feedback, feedbackTick, soundEnabled, hapticsEnabled });
+
+  // Let the yelp banner land before offering the next decision.
+  useEffect(() => {
+    if (feedback.kind !== 'dead') {
+      setDeathChoicesVisible(false);
+      return;
+    }
+    const timer = setTimeout(() => setDeathChoicesVisible(true), 900);
+    return () => clearTimeout(timer);
+  }, [feedback, feedbackTick]);
 
   useEffect(() => {
     if (id) loadLevel(id);
@@ -249,6 +261,14 @@ export default function GameScreen() {
           reset();
           setResetConfirmVisible(false);
         }}
+      />
+      <DeathChoiceModal
+        visible={deathChoicesVisible}
+        onRestart={() => {
+          reset();
+          setDeathChoicesVisible(false);
+        }}
+        onLobby={() => router.replace('/')}
       />
 
       {showClear && (

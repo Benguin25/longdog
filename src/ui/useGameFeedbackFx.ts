@@ -24,6 +24,12 @@ export function useGameFeedbackFx({
   const [deadFlash, setDeadFlash] = useState<string | null>(null);
 
   useEffect(() => {
+    // A screen may be kept mounted while the store loads a fresh level.
+    // Clear any prior death banner immediately instead of carrying "Yelp!"
+    // into the next attempt.
+    if (feedback.kind !== 'dead') {
+      setDeadFlash(null);
+    }
     if (feedbackTick === 0) return;
     const buzz = (fn: () => Promise<unknown>) => {
       if (!HAPTICS_ENABLED || !hapticsEnabled) return;

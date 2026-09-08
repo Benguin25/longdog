@@ -119,21 +119,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
             feedbackTick: feedbackTick + 1,
             exited: null,
           });
-          deathTimers = [
-            setTimeout(() => {
-              if (get().state !== terminalState) return;
-              set({ feedback: { kind: 'dead', cause: result.cause }, feedbackTick: get().feedbackTick + 1 });
-            }, duration),
-            setTimeout(() => {
-              if (get().state !== terminalState) return;
-              set({ prevState: terminalState, state, fallRows: {}, fallEats: {}, resolvingDeath: false, feedback: { kind: 'none' }, feedbackTick: get().feedbackTick + 1 });
-              deathTimers = [];
-            }, duration + DEATH_FX_MS),
-          ];
+          deathTimers = [setTimeout(() => {
+            if (get().state !== terminalState) return;
+            set({ feedback: { kind: 'dead', cause: result.cause }, feedbackTick: get().feedbackTick + 1 });
+            deathTimers = [];
+          }, duration)];
           return;
         }
         // Spec: death is an auto-undo — the pre-move state is kept.
         set({
+          resolvingDeath: true,
           feedback: { kind: 'dead', cause: result.cause },
           feedbackTick: feedbackTick + 1,
         });

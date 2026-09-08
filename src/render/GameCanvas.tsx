@@ -815,7 +815,7 @@ function StatueWash({
   );
 }
 
-/** Dust puff + fast-rewind chevrons + white flash on death-undo. */
+/** Dust puff and white flash on death. */
 function DeathFx({
   cx, cy, layout, boardW, boardH,
 }: {
@@ -828,13 +828,6 @@ function DeathFx({
   }, [v]);
 
   const flashO = useDerivedValue(() => 0.35 * Math.max(0, 1 - v.value * 2.4));
-  const chevTf = useDerivedValue(() => [{ translateX: (0.5 - v.value) * boardW * 0.28 }]);
-  const chevO = useDerivedValue(() => (v.value < 0.12 ? v.value / 0.12 : Math.max(0, 1 - v.value)));
-
-  const chevron = (x: number) =>
-    `M${x} ${cy}L${x + t * 0.55} ${cy - t * 0.42}V${cy + t * 0.42}Z` +
-    `M${x + t * 0.62} ${cy}L${x + t * 1.17} ${cy - t * 0.42}V${cy + t * 0.42}Z`;
-
   return (
     <Group>
       <Rect x={layout.ox - BOARD_MARGIN} y={layout.oy - BOARD_MARGIN} width={boardW} height={boardH} color="#FFFFFF" opacity={flashO} />
@@ -852,9 +845,6 @@ function DeathFx({
         const dop = useDerivedValue(() => 0.9 * (1 - v.value));
         return <Circle key={i} cx={dcx} cy={dcy} r={dr} color={COLORS.dust} opacity={dop} />;
       })}
-      <Group transform={chevTf} opacity={chevO}>
-        <Path path={chevron(cx - t * 1.9)} color={COLORS.rewind} />
-      </Group>
     </Group>
   );
 }

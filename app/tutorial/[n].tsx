@@ -22,6 +22,7 @@ import { exitDurationMs } from '../../src/render/scene';
 import { useGameStore } from '../../src/store/gameStore';
 import { useProgressStore } from '../../src/store/progressStore';
 import { DPad } from '../../src/ui/DPad';
+import { DeathChoiceModal } from '../../src/ui/DeathChoiceModal';
 import { HudButton } from '../../src/ui/HudButton';
 import { useGameFeedbackFx } from '../../src/ui/useGameFeedbackFx';
 
@@ -56,10 +57,20 @@ export default function TutorialScreen() {
 
   const { deadFlash } = useGameFeedbackFx({ feedback, feedbackTick, soundEnabled, hapticsEnabled });
 
+  useEffect(() => {
+    if (feedback.kind !== 'dead') {
+      setDeathChoicesVisible(false);
+      return;
+    }
+    const timer = setTimeout(() => setDeathChoicesVisible(true), 900);
+    return () => clearTimeout(timer);
+  }, [feedback, feedbackTick]);
+
   const [board, setBoard] = useState({ w: 0, h: 0 });
   const [progress, setProgressState] = useState<Progress>({ stepIndex: 0, stepStartMoves: [0] });
   const progressRef = useRef<Progress>(progress);
   const [lessonComplete, setLessonComplete] = useState(false);
+  const [deathChoicesVisible, setDeathChoicesVisible] = useState(false);
   const clearedRef = useRef(false);
 
   const updateProgress = useCallback((next: Progress) => {
@@ -280,6 +291,14 @@ export default function TutorialScreen() {
           </View>
         </View>
       )}
+      <DeathChoiceModal
+        visible={deathChoicesVisible}
+        onRestart={() => {
+          handleReset();
+          setDeathChoicesVisible(false);
+        }}
+        onLobby={() => router.replace('/')}
+      />
     </SafeAreaView>
   );
 }
