@@ -197,10 +197,12 @@ type GravityResult =
       /** Snacks left after any mid-fall eating. */
       readonly snacks: readonly Cell[];
       readonly anyFell: boolean;
-      /** Rows each dog's head fell, indexed like the dogs array. */
-      readonly rowsFallen: readonly number[];
-      /** Per dog (indexed like the dogs array): head rows at which it ate. */
-      readonly eatRows: readonly (readonly number[])[];
+      /** Rows each dog's head fell, keyed by stable dog id. */
+      readonly rowsFallen: Readonly<Record<number, number>>;
+      /** Per dog id: head rows at which it ate. */
+      readonly eatRows: Readonly<Record<number, readonly number[]>>;
+      /** Dogs that entered the open exit while falling. */
+      readonly exited: readonly Dog[];
     }
   | { readonly status: 'dead'; readonly cause: DeathCause };
 
@@ -243,20 +245,26 @@ function supportedDogs(
  * Settle all dogs under gravity. All unsupported dogs fall together one row
  * per step. A falling dog whose head has a snack directly beneath it eats
  * it that row: the head advances onto the snack and the body stays put
- * (growing the dog by one, tail in place, exactly like an eating move).
- * Falling below the grid or into a spike cell is death.
+ * (growing the dog by one, tail in place, exactly like an eating move). A
+ * falling head entering an open exit leaves the board, just as it does on a
+ * deliberate move. Falling below the grid or into a spike cell is death.
  */
 function settle(state: GameState, dogsIn: readonly Dog[]): GravityResult {
   let dogs = dogsIn;
   let snacks = state.snacks;
   let anyFell = false;
-  const rowsFallen = dogsIn.map(() => 0);
-  const eatRows: number[][] = dogsIn.map(() => []);
+  const rowsFallen: Record<number, number> = {};
+  const eatRows: Record<number, number[]> = {};
+  for (const dog of dogsIn) {
+    rowsFallen[dog.id] = 0;
+    eatRows[dog.id] = [];
+  }
+  const exited: Dog[] = [];
 
   for (;;) {
     let supported = supportedDogs(state, dogs, new Set());
     if (supported.size === dogs.length) {
-      return { status: 'settled', dogs, snacks, anyFell, rowsFallen, eatRows };
+      return { status: 'settled', dogs, snacks, anyFell, rowsFallen, eatRows, exited };
     }
     anyFell = true;
 
@@ -276,13 +284,13 @@ function settle(state: GameState, dogsIn: readonly Dog[]): GravityResult {
 
     dogs = dogs.map((dog, i) => {
       if (eaters.has(i)) {
-        rowsFallen[i] += 1;
-        eatRows[i].push(rowsFallen[i]);
+        rowsFallen[dog.id] += 1;
+        eatRows[dog.id].push(rowsFallen[dog.id]);
         const head = dog.cells[0];
         return { ...dog, cells: [{ x: head.x, y: head.y + 1 }, ...dog.cells] };
       }
       if (supported.has(i)) return dog;
-      rowsFallen[i] += 1;
+      rowsFallen[dog.id] += 1;
       return { ...dog, cells: dog.cells.map((c) => ({ x: c.x, y: c.y + 1 })) };
     });
 
@@ -292,6 +300,19 @@ function settle(state: GameState, dogsIn: readonly Dog[]): GravityResult {
         if (c.y >= state.height) return { status: 'dead', cause: 'fell' };
         if (state.spikes.has(cellKey(c.x, c.y))) return { status: 'dead', cause: 'spikes' };
       }
+    }
+
+    // The exit is passable, so resolve it after the row's fall exactly as
+    // normal movement does. Only heads that actually fell this row can exit.
+    if (snacks.length === 0) {
+      const exiting = new Set<number>();
+      dogs.forEach((dog, i) => {
+        if ((eaters.has(i) || !supported.has(i)) && sameCell(dog.cells[0], state.exit)) {
+          exiting.add(i);
+          exited.push(dog);
+        }
+      });
+      if (exiting.size > 0) dogs = dogs.filter((_, i) => !exiting.has(i));
     }
   }
 }
@@ -324,18 +345,21 @@ function finishAction(
 
   const fallRows: Record<number, number> = {};
   const fallEats: Record<number, readonly number[]> = {};
-  settled.rowsFallen.forEach((rows, i) => {
-    if (rows > 0) fallRows[dogs[i].id] = rows;
-    const eats = settled.eatRows[i];
+  Object.entries(settled.rowsFallen).forEach(([id, rows]) => {
+    if (rows > 0) fallRows[Number(id)] = rows;
+    const eats = settled.eatRows[Number(id)];
     if (eats.length > 0) {
-      fallEats[dogs[i].id] = eats;
+      fallEats[Number(id)] = eats;
       for (let k = 0; k < eats.length; k++) events.push('ate');
     }
   });
   if (midState.snacks.length > 0 && settled.snacks.length === 0) events.push('exitOpened');
+  for (let i = 0; i < settled.exited.length; i++) events.push('dogExited');
 
   const active =
-    dogs.length === 0 ? 0 : Math.min(patch.activeDog ?? state.activeDog, dogs.length - 1);
+    settled.dogs.length === 0
+      ? 0
+      : Math.min(patch.activeDog ?? state.activeDog, settled.dogs.length - 1);
   const next: GameState = {
     ...midState,
     snacks: settled.snacks,
@@ -343,8 +367,9 @@ function finishAction(
     activeDog: active,
   };
 
-  if (isWon(next)) return { status: 'won', state: next, events, fallRows, fallEats, exited: patch.exited };
-  return { status: 'moved', state: next, events, fallRows, fallEats, exited: patch.exited };
+  const exited = patch.exited ?? settled.exited[0];
+  if (isWon(next)) return { status: 'won', state: next, events, fallRows, fallEats, exited };
+  return { status: 'moved', state: next, events, fallRows, fallEats, exited };
 }
 
 // ---------------------------------------------------------------------------
