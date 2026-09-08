@@ -37,6 +37,7 @@
     "android": "expo start --android",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/game/bonePass.test.ts",
     "solve": "tsx scripts/solver.ts",
     "generate": "tsx scripts/generator.ts",
     "sounds": "tsx scripts/sounds.ts",

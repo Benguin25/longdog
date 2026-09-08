@@ -6,7 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
-import { BISCUITS_FIRST_CLEAR, BISCUITS_PER_STAR, BISCUITS_TUTORIAL, SHOP_ITEMS } from '../game/config';
+import { BISCUITS_FIRST_CLEAR, BISCUITS_PER_STAR, BISCUITS_TUTORIAL, BONE_PASS_STARS_PER_LEVEL, BONE_PASS_TIERS, SHOP_ITEMS } from '../game/config';
 import { LEVELS } from '../game/levels';
 
 export interface Equipped {
@@ -31,6 +31,8 @@ interface ProgressStore {
   /** Cosmetic item ids the player owns (the free 'classic' coat always is). */
   owned: string[];
   equipped: Equipped;
+  /** Cosmetic rewards collected from the Bone Pass. */
+  claimedBonePassRewards: string[];
   /** True once AsyncStorage rehydration finished (gates lock rendering). */
   hydrated: boolean;
 
@@ -42,6 +44,8 @@ interface ProgressStore {
   buyItem: (id: string) => boolean;
   /** Equips an owned item (or unequips accessory/theme with null). */
   equipItem: (slot: 'coat' | 'accessory' | 'theme', id: string | null) => void;
+  /** Claims an unlocked Bone Pass cosmetic. Returns false if unavailable. */
+  claimBonePassReward: (id: string) => boolean;
   setSoundEnabled: (v: boolean) => void;
   setHapticsEnabled: (v: boolean) => void;
   setTutorialPrompted: (v: boolean) => void;
@@ -61,6 +65,7 @@ export const useProgressStore = create<ProgressStore>()(
       biscuits: 0,
       owned: ['classic'],
       equipped: DEFAULT_EQUIPPED,
+      claimedBonePassRewards: [],
       hydrated: false,
 
       recordClear: (levelId, s) => {
@@ -106,6 +111,20 @@ export const useProgressStore = create<ProgressStore>()(
         set({ equipped: { ...st.equipped, [slot]: id } });
       },
 
+      claimBonePassReward: (id) => {
+        const tier = BONE_PASS_TIERS.find((candidate) => candidate.rewardId === id);
+        const st = get();
+        if (!tier || st.claimedBonePassRewards.includes(id)) return false;
+        const earnedStars = totalStars(st.stars);
+        const unlockedLevel = Math.min(BONE_PASS_TIERS.length, Math.floor(earnedStars / BONE_PASS_STARS_PER_LEVEL) + 1);
+        if (tier.level > unlockedLevel) return false;
+        set({
+          claimedBonePassRewards: [...st.claimedBonePassRewards, id],
+          owned: st.owned.includes(id) ? st.owned : [...st.owned, id],
+        });
+        return true;
+      },
+
       setSoundEnabled: (v) => set({ soundEnabled: v }),
       setHapticsEnabled: (v) => set({ hapticsEnabled: v }),
       setTutorialPrompted: (v) => set({ tutorialPrompted: v }),
@@ -119,6 +138,7 @@ export const useProgressStore = create<ProgressStore>()(
           biscuits: 0,
           owned: ['classic'],
           equipped: DEFAULT_EQUIPPED,
+          claimedBonePassRewards: [],
         }),
     }),
     {
@@ -133,6 +153,7 @@ export const useProgressStore = create<ProgressStore>()(
         biscuits: s.biscuits,
         owned: s.owned,
         equipped: s.equipped,
+        claimedBonePassRewards: s.claimedBonePassRewards,
       }),
       onRehydrateStorage: () => () => {
         useProgressStore.getState().setHydrated(true);

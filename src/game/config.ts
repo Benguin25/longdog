@@ -308,3 +308,28 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
   { id: 'candy', slot: 'theme', name: 'Candy', price: 300, blurb: 'A sugary pastel wonderland.' },
   { id: 'neon-night', slot: 'theme', name: 'Neon Night', price: 400, blurb: 'Electric greens under a glowing sky.' },
 ];
+
+// ---------------------------------------------------------------------------
+// Bone Pass (presentation/progression only; purchases are not implemented)
+// ---------------------------------------------------------------------------
+
+export interface BonePassTier {
+  readonly level: number;
+  readonly rewardId: string;
+  readonly rewardName: string;
+  readonly slot: ShopItem['slot'];
+  readonly blurb: string;
+}
+
+/** Example cosmetic rewards for the seasonal Bone Pass. Each tier takes 12
+ * earned stars, so normal puzzle progress advances the pass without adding a
+ * separate currency or gameplay system. */
+export const BONE_PASS_STARS_PER_LEVEL = 12;
+export const BONE_PASS_TIERS: readonly BonePassTier[] = [
+  { level: 1, rewardId: 'bandana', rewardName: 'Red Bandana', slot: 'accessory', blurb: 'A jaunty first reward.' },
+  { level: 2, rewardId: 'cream', rewardName: 'Cream Coat', slot: 'coat', blurb: 'Soft and pale, nose to tail.' },
+  { level: 3, rewardId: 'bow', rewardName: 'Pink Bow', slot: 'accessory', blurb: 'A touch of glamour.' },
+  { level: 4, rewardId: 'sunset', rewardName: 'Sunset Theme', slot: 'theme', blurb: 'Warm pink skies for every board.' },
+  { level: 5, rewardId: 'sunglasses', rewardName: 'Sunglasses', slot: 'accessory', blurb: 'Too cool for the garden.' },
+  { level: 6, rewardId: 'blueberry', rewardName: 'Blueberry Coat', slot: 'coat', blurb: 'An unlikely, lovely blue.' },
+];
