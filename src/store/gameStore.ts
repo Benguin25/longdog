@@ -3,6 +3,9 @@
 
 import { create } from 'zustand';
 
+import { DEATH_FX_MS } from '../game/config';
+import { buildActionTimelines } from '../render/scene';
+
 import {
   applyAction,
   parseLevel,
@@ -23,6 +26,12 @@ export type Feedback =
   | { kind: 'dead'; cause: DeathCause }
   | { kind: 'events'; events: readonly GameEvent[] };
 
+let deathTimers: ReturnType<typeof setTimeout>[] = [];
+function cancelDeathTimers() {
+  deathTimers.forEach(clearTimeout);
+  deathTimers = [];
+}
+
 interface GameStore {
   level: LevelData | null;
   state: GameState | null;
@@ -34,6 +43,7 @@ interface GameStore {
   history: GameState[];
   moveCount: number;
   won: boolean;
+  resolvingDeath: boolean;
   /** Feedback for the latest input, with a tick so repeats retrigger effects. */
   feedback: Feedback;
   feedbackTick: number;
@@ -56,6 +66,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   history: [],
   moveCount: 0,
   won: false,
+  resolvingDeath: false,
   feedback: { kind: 'none' },
   feedbackTick: 0,
   exited: null,
@@ -67,6 +78,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   loadLevelData: (level) => {
+    cancelDeathTimers();
     set({
       level,
       state: parseLevel(level),
@@ -76,6 +88,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       history: [],
       moveCount: 0,
       won: false,
+      resolvingDeath: false,
       feedback: { kind: 'none' },
       feedbackTick: 0,
       exited: null,
@@ -83,21 +96,53 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   dispatch: (action) => {
-    const { state, won, history, moveCount, feedbackTick } = get();
-    if (!state || won) return;
+    const { state, won, resolvingDeath, history, moveCount, feedbackTick } = get();
+    if (!state || won || resolvingDeath) return;
 
     const result = applyAction(state, action);
     switch (result.status) {
       case 'blocked':
         set({ feedback: { kind: 'blocked' }, feedbackTick: feedbackTick + 1 });
         return;
-      case 'dead':
+      case 'dead': {
+        if (result.state && result.fallRows && result.fallEats) {
+          const terminalState = result.state;
+          const duration = Math.max(
+            0,
+            ...[...buildActionTimelines(terminalState, state, result.fallRows, result.fallEats).values()]
+              .map((timeline) => timeline.totalMs),
+          );
+          cancelDeathTimers();
+          set({
+            prevState: state,
+            state: terminalState,
+            fallRows: result.fallRows,
+            fallEats: result.fallEats,
+            resolvingDeath: true,
+            feedback: { kind: 'events', events: ['fell'] },
+            feedbackTick: feedbackTick + 1,
+            exited: null,
+          });
+          deathTimers = [
+            setTimeout(() => {
+              if (get().state !== terminalState) return;
+              set({ feedback: { kind: 'dead', cause: result.cause }, feedbackTick: get().feedbackTick + 1 });
+            }, duration),
+            setTimeout(() => {
+              if (get().state !== terminalState) return;
+              set({ prevState: terminalState, state, fallRows: {}, fallEats: {}, resolvingDeath: false, feedback: { kind: 'none' }, feedbackTick: get().feedbackTick + 1 });
+              deathTimers = [];
+            }, duration + DEATH_FX_MS),
+          ];
+          return;
+        }
         // Spec: death is an auto-undo — the pre-move state is kept.
         set({
           feedback: { kind: 'dead', cause: result.cause },
           feedbackTick: feedbackTick + 1,
         });
         return;
+      }
       case 'moved':
       case 'won':
         set({
@@ -117,7 +162,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   undo: () => {
-    const { history, state, moveCount, feedbackTick } = get();
+    const { history, state, moveCount, feedbackTick, resolvingDeath } = get();
+    if (resolvingDeath) return;
     const prev = history[history.length - 1];
     if (!prev || !state) return;
     set({
@@ -137,6 +183,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   reset: () => {
     const { level, feedbackTick } = get();
     if (!level) return;
+    cancelDeathTimers();
     set({
       state: parseLevel(level),
       prevState: null,
@@ -145,6 +192,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       history: [],
       moveCount: 0,
       won: false,
+      resolvingDeath: false,
       feedback: { kind: 'none' },
       feedbackTick: feedbackTick + 1,
       exited: null,
