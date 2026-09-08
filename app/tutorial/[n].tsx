@@ -126,18 +126,13 @@ export default function TutorialScreen() {
         return;
       }
 
-      if (input === 'undo') {
-        useGameStore.getState().undo();
-      } else {
-        useGameStore.getState().dispatch(input);
-      }
+      useGameStore.getState().dispatch(input);
 
       const st = useGameStore.getState();
       let idx = stepIndex;
       let starts = stepStartMoves;
 
-      const outcome: TutorialOutcome =
-        input === 'undo' ? { kind: 'undo' } : { kind: 'action', feedback: st.feedback };
+      const outcome: TutorialOutcome = { kind: 'action', feedback: st.feedback };
 
       // Check whether this input completes the CURRENT step first — an undo
       // that satisfies an `until: 'undo'` step should advance, even though
@@ -147,8 +142,6 @@ export default function TutorialScreen() {
         starts = [...starts];
         starts[idx + 1] = st.moveCount;
         idx += 1;
-      } else if (input === 'undo') {
-        while (idx > 0 && st.moveCount < starts[idx]) idx -= 1;
       }
 
       if (idx !== stepIndex || starts !== stepStartMoves) {
@@ -217,7 +210,6 @@ export default function TutorialScreen() {
           <Text style={styles.counter}>{tutorialLevel.name}</Text>
         </View>
         <View style={styles.hudRight}>
-          <HudButton label="Undo" onPress={() => handleInput('undo')} disabled={moveCount === 0} />
         </View>
       </View>
 

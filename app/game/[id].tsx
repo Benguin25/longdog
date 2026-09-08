@@ -31,6 +31,7 @@ import { DPad } from '../../src/ui/DPad';
 import { FpsOverlay } from '../../src/ui/FpsOverlay';
 import { HowToPlayModal } from '../../src/ui/HowToPlayModal';
 import { HudButton } from '../../src/ui/HudButton';
+import { ResetConfirmModal } from '../../src/ui/ResetConfirmModal';
 import { useGameFeedbackFx } from '../../src/ui/useGameFeedbackFx';
 
 const HINT_ARROW: Record<Action, string> = {
@@ -57,7 +58,6 @@ export default function GameScreen() {
   const exited = useGameStore((s) => s.exited);
   const loadLevel = useGameStore((s) => s.loadLevel);
   const dispatch = useGameStore((s) => s.dispatch);
-  const undo = useGameStore((s) => s.undo);
   const reset = useGameStore((s) => s.reset);
 
   const hapticsEnabled = useProgressStore((s) => s.hapticsEnabled);
@@ -68,6 +68,7 @@ export default function GameScreen() {
   const [board, setBoard] = useState({ w: 0, h: 0 });
   const [hint, setHint] = useState<string | null>(null);
   const [helpVisible, setHelpVisible] = useState(false);
+  const [resetConfirmVisible, setResetConfirmVisible] = useState(false);
   const [showClear, setShowClear] = useState(false);
 
   const buzz = useCallback(
@@ -184,7 +185,8 @@ export default function GameScreen() {
         </View>
         <View style={styles.hudRight}>
           <HudButton label="?" onPress={() => setHelpVisible(true)} />
-          <HudButton label="Undo" onPress={undo} disabled={moveCount === 0} />
+          {SHOW_HINT_BUTTON && <HudButton label="💡" accessibilityLabel="Hint" compact onPress={onHint} />}
+          <HudButton label="↻" accessibilityLabel="Restart level" compact onPress={() => setResetConfirmVisible(true)} />
         </View>
       </View>
 
@@ -229,9 +231,7 @@ export default function GameScreen() {
 
       <View style={styles.controls}>
         <View style={styles.sideButtons}>
-          <HudButton label="Reset" onPress={reset} />
           {state.dogs.length > 1 && <HudButton label="Swap" onPress={() => dispatch('swap')} />}
-          {SHOW_HINT_BUTTON && <HudButton label="Hint" onPress={onHint} />}
         </View>
         <DPad onMove={onMove} />
         <View style={styles.sideButtons} />
@@ -241,6 +241,14 @@ export default function GameScreen() {
         visible={helpVisible}
         onClose={() => setHelpVisible(false)}
         onPlayTutorial={() => router.push('/tutorial/1')}
+      />
+      <ResetConfirmModal
+        visible={resetConfirmVisible}
+        onCancel={() => setResetConfirmVisible(false)}
+        onConfirm={() => {
+          reset();
+          setResetConfirmVisible(false);
+        }}
       />
 
       {showClear && (

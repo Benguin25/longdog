@@ -127,11 +127,12 @@ export function buildBoardPicture(
       );
 
       drawOps(canvas, [
-        // Play-dead mats sit behind everything that can pass over them.
+        // Turn-to-stone mats sit behind everything that can pass over them.
         { d: mats.outline, color: COLORS.outline, stroke: ow * 0.9 },
         { d: mats.mat, color: COLORS.freezeMat },
         { d: mats.band, color: COLORS.freezeMatDark },
-        { d: mats.paw, color: COLORS.freezePaw },
+        { d: mats.statueDog, color: COLORS.freezePaw },
+        { d: mats.statueCracks, color: COLORS.freezeMatDark, stroke: ow * 0.45 },
 
         // Dirt blocks with grass caps and one thick contour per cluster.
         { d: walls.dirt, color: pal.dirt },

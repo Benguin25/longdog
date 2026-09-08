@@ -13,10 +13,9 @@ export type TutorialUntil =
   | 'dead'
   | 'froze'
   | 'dogExited'
-  | 'undo'
   | 'continue';
 
-export type TutorialAllow = Action | 'undo';
+export type TutorialAllow = Action;
 
 export type TutorialHighlight =
   | 'exit'
@@ -29,8 +28,7 @@ export type TutorialHighlight =
 
 export interface TutorialStep {
   readonly say: string;
-  /** Inputs accepted this step, in addition to undo (always allowed).
-   *  Undefined = any input accepted. */
+  /** Inputs accepted for this step. Undefined = any input accepted. */
   readonly allow?: readonly TutorialAllow[];
   readonly until: TutorialUntil;
   readonly highlight?: TutorialHighlight;
@@ -73,13 +71,11 @@ export function resolveHighlight(
 
 export type TutorialOutcome =
   | { readonly kind: 'action'; readonly feedback: Feedback }
-  | { readonly kind: 'undo' }
   | { readonly kind: 'continue' };
 
 /** Whether `outcome` satisfies `step`'s advance condition. */
 export function stepSatisfied(step: TutorialStep, outcome: TutorialOutcome): boolean {
   const until = step.until;
-  if (until === 'undo') return outcome.kind === 'undo';
   if (until === 'continue') return outcome.kind === 'continue';
   if (outcome.kind !== 'action') return false;
   const { feedback } = outcome;
@@ -89,8 +85,7 @@ export function stepSatisfied(step: TutorialStep, outcome: TutorialOutcome): boo
   return feedback.events.includes(until);
 }
 
-/** Whether `input` is an accepted move for `step` (undo always is). */
+/** Whether `input` is an accepted move for `step`. */
 export function inputAllowed(step: TutorialStep, input: TutorialAllow): boolean {
-  if (input === 'undo') return true;
   return step.allow === undefined || step.allow.includes(input);
 }

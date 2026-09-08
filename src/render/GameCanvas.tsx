@@ -83,6 +83,7 @@ import {
 } from '../game/config';
 import {
   isExitOpen,
+  nextDogSpawnCells,
   type Cell,
   type Dir,
   type Dog,
@@ -277,6 +278,48 @@ function DogHouse({
       <Circle cx={x0 + t * 0.4} cy={y0 + t * 0.5} r={t * 0.045} color={COLORS.bone} />
       <Circle cx={x0 + t * 0.6} cy={y0 + t * 0.455} r={t * 0.045} color={COLORS.bone} />
       <Circle cx={x0 + t * 0.6} cy={y0 + t * 0.5} r={t * 0.045} color={COLORS.bone} />
+    </Group>
+  );
+}
+
+// A persistent, rule-derived preview answers the question players have before
+// they commit to a stone shape: exactly where will the next dog appear?
+function NextDogPreview({ state, layout }: { state: GameState; layout: Layout }) {
+  const house = state.doghouse;
+  const cells = nextDogSpawnCells(state);
+  if (!house || cells.length === 0) return null;
+
+  const t = layout.tile;
+  // spawnDir points from the head toward the body. The arrow should show the
+  // direction the dog's head will face, which is the opposite direction.
+  const d = state.spawnDir === 'left' ? { x: 1, y: 0 }
+    : state.spawnDir === 'right' ? { x: -1, y: 0 }
+      : state.spawnDir === 'up' ? { x: 0, y: 1 } : { x: 0, y: -1 };
+  const cx = px(layout, house.x) + t / 2;
+  const cy = py(layout, house.y) + t / 2;
+  const tipX = cx + d.x * t * 0.72;
+  const tipY = cy + d.y * t * 0.72;
+  const sideX = -d.y;
+  const sideY = d.x;
+
+  return (
+    <Group opacity={0.5}>
+      {cells.map((cell, i) => (
+        <RoundedRect
+          key={`${cell.x},${cell.y}`}
+          x={px(layout, cell.x) + t * 0.13}
+          y={py(layout, cell.y) + t * 0.2}
+          width={t * 0.74}
+          height={t * 0.6}
+          r={t * 0.28}
+          color={i === 0 ? COLORS.freezePaw : COLORS.freezeMat}
+          style="stroke"
+          strokeWidth={t * OUTLINE_FRAC * 0.8}
+        />
+      ))}
+      <Line p1={{ x: cx, y: cy }} p2={{ x: tipX, y: tipY }} color={COLORS.freezePaw} strokeWidth={t * 0.09} strokeCap="round" />
+      <Line p1={{ x: tipX, y: tipY }} p2={{ x: tipX - d.x * t * 0.2 + sideX * t * 0.16, y: tipY - d.y * t * 0.2 + sideY * t * 0.16 }} color={COLORS.freezePaw} strokeWidth={t * 0.08} strokeCap="round" />
+      <Line p1={{ x: tipX, y: tipY }} p2={{ x: tipX - d.x * t * 0.2 - sideX * t * 0.16, y: tipY - d.y * t * 0.2 - sideY * t * 0.16 }} color={COLORS.freezePaw} strokeWidth={t * 0.08} strokeCap="round" />
     </Group>
   );
 }
@@ -1033,6 +1076,7 @@ export function GameCanvas({
 
         {/* Board frame + terrain + snacks (static picture, occludes doors). */}
         <Picture picture={boardPicture} />
+        <NextDogPreview state={state} layout={layout} />
 
         {washCells.length > 0 && (
           <StatueWash key={`wash${feedbackTick}`} cells={washCells} layout={layout} color={coat.body} />

@@ -1,5 +1,5 @@
 // Session game store. All rule outcomes come from src/game/rules.ts — this
-// store only sequences states, history (undo), and UI feedback events.
+// store only sequences states and UI feedback events.
 
 import { create } from 'zustand';
 
@@ -40,7 +40,6 @@ interface GameStore {
   /** Rows each dog fell in the latest action (drives the fall tween). */
   fallRows: FallRows;
   fallEats: FallEats;
-  history: GameState[];
   moveCount: number;
   won: boolean;
   resolvingDeath: boolean;
@@ -53,7 +52,6 @@ interface GameStore {
   loadLevel: (id: string) => void;
   loadLevelData: (level: LevelData) => void;
   dispatch: (action: Action) => void;
-  undo: () => void;
   reset: () => void;
 }
 
@@ -63,7 +61,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
   prevState: null,
   fallRows: {},
   fallEats: {},
-  history: [],
   moveCount: 0,
   won: false,
   resolvingDeath: false,
@@ -85,7 +82,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       prevState: null,
       fallRows: {},
       fallEats: {},
-      history: [],
       moveCount: 0,
       won: false,
       resolvingDeath: false,
@@ -96,7 +92,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   dispatch: (action) => {
-    const { state, won, resolvingDeath, history, moveCount, feedbackTick } = get();
+    const { state, won, resolvingDeath, moveCount, feedbackTick } = get();
     if (!state || won || resolvingDeath) return;
 
     const result = applyAction(state, action);
@@ -150,7 +146,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
           state: result.state,
           fallRows: result.fallRows,
           fallEats: result.fallEats,
-          history: [...history, state],
           moveCount: moveCount + 1,
           won: result.status === 'won',
           feedback: { kind: 'events', events: result.events },
@@ -159,25 +154,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
         });
         return;
     }
-  },
-
-  undo: () => {
-    const { history, state, moveCount, feedbackTick, resolvingDeath } = get();
-    if (resolvingDeath) return;
-    const prev = history[history.length - 1];
-    if (!prev || !state) return;
-    set({
-      prevState: state,
-      state: prev,
-      fallRows: {},
-      fallEats: {},
-      history: history.slice(0, -1),
-      moveCount: moveCount - 1,
-      won: false,
-      feedback: { kind: 'none' },
-      feedbackTick: feedbackTick + 1,
-      exited: null,
-    });
   },
 
   reset: () => {
@@ -189,7 +165,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       prevState: null,
       fallRows: {},
       fallEats: {},
-      history: [],
       moveCount: 0,
       won: false,
       resolvingDeath: false,

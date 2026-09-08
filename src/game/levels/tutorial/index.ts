@@ -72,9 +72,8 @@ export const TUTORIAL_LEVELS: readonly TutorialLevel[] = [
         highlight: 'exit',
       },
       {
-        say: 'Too short! Only one segment is on the ledge, so there is nothing to stand on. Press UNDO to step back.',
-        allow: ['undo'],
-        until: 'undo',
+        say: 'Too short! Only one segment is on the ledge, so there is nothing to stand on. The miss rewound automatically.',
+        until: 'continue',
       },
       {
         say: 'A longer dog reaches further. Turn around (go UP, then LEFT) and eat both bones.',
@@ -92,13 +91,13 @@ export const TUTORIAL_LEVELS: readonly TutorialLevel[] = [
     ...tut04,
     script: [
       {
-        say: 'Rakes ahead and no bones to grow with. Time for the signature move: swipe RIGHT onto the purple paw mat.',
+        say: 'Rakes ahead and no bones to grow with. Swipe RIGHT onto the purple tile with the cracked stone dog.',
         allow: ['right'],
         until: 'froze',
         highlight: 'freeze',
       },
       {
-        say: 'You PLAYED DEAD. The dog turned to stone in exactly that shape, and statues are solid ground forever. A fresh dog just popped out of the dog house!',
+        say: 'Your dog turned to stone in exactly that shape. Stone dogs are solid ground forever, and the fresh dog from the house follows gravity.',
         until: 'continue',
         highlight: 'doghouse',
       },

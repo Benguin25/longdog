@@ -221,6 +221,17 @@ type GravityResult =
       readonly rowsFallen: Readonly<Record<number, number>>;
       readonly eatRows: Readonly<Record<number, readonly number[]>>;
       readonly exited: readonly Dog[];
+    }
+  | {
+      /** A falling head entered a turn-to-stone tile. */
+      readonly status: 'froze';
+      readonly dogs: readonly Dog[];
+      readonly snacks: readonly Cell[];
+      readonly anyFell: boolean;
+      readonly rowsFallen: Readonly<Record<number, number>>;
+      readonly eatRows: Readonly<Record<number, readonly number[]>>;
+      readonly exited: readonly Dog[];
+      readonly frozenDogIndex: number;
     };
 
 /**
@@ -311,6 +322,18 @@ function settle(state: GameState, dogsIn: readonly Dog[]): GravityResult {
       return { ...dog, cells: dog.cells.map((c) => ({ x: c.x, y: c.y + 1 })) };
     });
 
+    // Like bones and the exit, a turn-to-stone tile activates when a falling
+    // head reaches it. This check must happen per fall row, not after the dog
+    // settles, because the head may continue past the tile.
+    const frozenDogIndex = dogs.findIndex(
+      (dog, i) => (eaters.has(i) || !supported.has(i)) && state.freezeTiles.has(cellKey(dog.cells[0].x, dog.cells[0].y)),
+    );
+    if (frozenDogIndex >= 0 && state.doghouse) {
+      return {
+        status: 'froze', dogs, snacks, anyFell, rowsFallen, eatRows, exited, frozenDogIndex,
+      };
+    }
+
     for (let i = 0; i < dogs.length; i++) {
       if (supported.has(i) && !eaters.has(i)) continue;
       for (const c of dogs[i].cells) {
@@ -361,6 +384,36 @@ function finishAction(
   };
 
   const settled = settle(midState, dogs);
+  if (settled.status === 'froze') {
+    const frozenDog = settled.dogs[settled.frozenDogIndex];
+    const statues = new Set(midState.statues);
+    for (const c of frozenDog.cells) statues.add(cellKey(c.x, c.y));
+
+    const spawnCells = spawnShape(midState.doghouse!, midState.spawnDir);
+    const others = settled.dogs.filter((_, i) => i !== settled.frozenDogIndex);
+    const occupied = dogCellMap(others);
+    const canSpawn = spawnCells.every((c) =>
+      inBounds(midState, c) &&
+      !midState.walls.has(cellKey(c.x, c.y)) &&
+      !statues.has(cellKey(c.x, c.y)) &&
+      !midState.spikes.has(cellKey(c.x, c.y)) &&
+      !occupied.has(cellKey(c.x, c.y)),
+    );
+    // Match a walked-on tile: if the house's exit is blocked, this freeze is
+    // illegal and the player keeps the pre-move state.
+    if (!canSpawn) {
+      return { status: 'blocked' };
+    }
+    const newDog: Dog = { id: midState.nextDogId, cells: spawnCells };
+    const nextDogs = [...others, newDog];
+    events.push('froze', 'spawned');
+    return finishAction(
+      midState,
+      nextDogs,
+      { snacks: settled.snacks, statues, activeDog: nextDogs.length - 1, nextDogId: midState.nextDogId + 1 },
+      events,
+    );
+  }
   if (settled.status === 'dead') {
     const fallRows: Record<number, number> = {};
     const fallEats: Record<number, readonly number[]> = {};
@@ -514,6 +567,12 @@ function spawnShape(doghouse: Cell, spawnDir: Dir): Cell[] {
     cells.push({ x: doghouse.x + d.x * i, y: doghouse.y + d.y * i });
   }
   return cells;
+}
+
+/** Exact cells occupied by the next dog released from the dog house.
+ * Exported for the board preview so its ghost can never drift from rules. */
+export function nextDogSpawnCells(state: GameState): readonly Cell[] {
+  return state.doghouse ? spawnShape(state.doghouse, state.spawnDir) : [];
 }
 
 /** Cycle control to the next live dog. No-op (blocked) with fewer than 2 dogs. */

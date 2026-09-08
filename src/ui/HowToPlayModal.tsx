@@ -35,9 +35,11 @@ const LONG_DOG_LEVEL: LevelData = {
   grid: ['......', '......', '#####E'],
   dogs: [[[3, 0], [3, 1], [2, 1], [1, 1], [0, 1]]],
 };
-const PLAYING_DEAD_LEVEL: LevelData = {
+// A real miniature freeze board: the same cracked-stone-dog tile from the
+// game is always available through the ? help button.
+const TURN_TO_STONE_LEVEL: LevelData = {
   id: 'htp-dead',
-  name: 'Playing Dead',
+  name: 'Turn to Stone',
   grid: ['..H....', '###..FE', '####^^#'],
   dogs: [[[4, 1], [3, 1]]],
   spawnDir: 'left',
@@ -73,7 +75,7 @@ const PAGES: Page[] = [
     title: 'Controls',
     lines: [
       'Swipe on the board, or use the D-pad, to move one tile at a time.',
-      'Undo takes back your last move — as many times as you like. Reset restarts the level.',
+      'Restart begins the level again. It asks before clearing your current moves.',
     ],
   },
   {
@@ -93,11 +95,11 @@ const PAGES: Page[] = [
     ],
   },
   {
-    illustration: { kind: 'board', level: PLAYING_DEAD_LEVEL, moves: ['right'] },
-    title: 'Playing Dead',
+    illustration: { kind: 'board', level: TURN_TO_STONE_LEVEL, moves: ['right'] },
+    title: 'Turn to Stone Tile',
     lines: [
-      'Step your head onto a “play dead” mat and your whole dog turns to stone, exactly in the shape it held.',
-      'A fresh dog pops out of the dog house. Statues make great stairs and bridges — the shape you freeze in is the puzzle.',
+      'The purple tile with the cracked stone dog turns your whole dog to stone in exactly the shape it held.',
+      'A fresh dog comes out of the dog house and falls under gravity. Stone dogs stay put as stairs and bridges — the shape you make is the puzzle.',
     ],
   },
   {

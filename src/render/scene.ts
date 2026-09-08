@@ -203,13 +203,16 @@ export function buildStatuePaths(statues: ReadonlySet<string>, l: Layout): Statu
 }
 
 // ---------------------------------------------------------------------------
-// Play-dead (freeze) tiles: a purple mat with a paw print
+// Turn-to-stone tiles: a purple mat with a tiny cracked stone dog. A paw
+// print reads as "dog" but not as "this dog becomes terrain", which is the
+// important part of this mechanic at board scale.
 // ---------------------------------------------------------------------------
 
 export interface FreezePaths {
   mat: string;
   band: string;
-  paw: string;
+  statueDog: string;
+  statueCracks: string;
   outline: string;
 }
 
@@ -217,7 +220,8 @@ export function buildFreezePaths(freezeTiles: ReadonlySet<string>, l: Layout): F
   const t = l.tile;
   let mat = '';
   let band = '';
-  let paw = '';
+  let statueDog = '';
+  let statueCracks = '';
 
   for (const { x, y } of parseKeys(freezeTiles)) {
     const x0 = px(l, x);
@@ -225,17 +229,21 @@ export function buildFreezePaths(freezeTiles: ReadonlySet<string>, l: Layout): F
     const m = rrect(x0 + t * 0.08, y0 + t * 0.08, t * 0.84, t * 0.84, t * 0.2);
     mat += m;
     band += rrect(x0 + t * 0.08, y0 + t * 0.66, t * 0.84, t * 0.26, t * 0.13);
-    // Paw print: big pad + three toes.
+    // Round head, long body, and a deliberately obvious crack: this tile
+    // means a dog will become a stone platform, not merely "dog here".
     const cx = x0 + t * 0.5;
-    const cy = y0 + t * 0.52;
-    paw +=
-      rrect(cx - t * 0.14, cy - t * 0.04, t * 0.28, t * 0.2, t * 0.1) +
-      circ(cx - t * 0.15, cy - t * 0.14, t * 0.065) +
-      circ(cx, cy - 0.19 * t, t * 0.07) +
-      circ(cx + t * 0.15, cy - t * 0.14, t * 0.065);
+    const cy = y0 + t * 0.48;
+    statueDog +=
+      rrect(cx - t * 0.31, cy - t * 0.1, t * 0.48, t * 0.22, t * 0.11) +
+      circ(cx + t * 0.25, cy, t * 0.14) +
+      rrect(cx - t * 0.2, cy + t * 0.08, t * 0.075, t * 0.17, t * 0.025) +
+      rrect(cx + t * 0.04, cy + t * 0.08, t * 0.075, t * 0.17, t * 0.025);
+    statueCracks +=
+      `M${cx - t * 0.05} ${cy - t * 0.1}L${cx + t * 0.02} ${cy - t * 0.01}L${cx - t * 0.04} ${cy + t * 0.08}` +
+      `M${cx + t * 0.21} ${cy - t * 0.06}L${cx + t * 0.28} ${cy + t * 0.02}`;
   }
 
-  return { mat, band, paw, outline: mat };
+  return { mat, band, statueDog, statueCracks, outline: mat };
 }
 
 // ---------------------------------------------------------------------------
