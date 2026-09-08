@@ -119,7 +119,15 @@ export type MoveResult =
       readonly exited?: Dog;
     }
   | { readonly status: 'blocked' }
-  | { readonly status: 'dead'; readonly cause: DeathCause };
+  | {
+      readonly status: 'dead';
+      readonly cause: DeathCause;
+      /** Present only for a gravity death, so the renderer can show the fall
+       * before the usual auto-undo feedback. */
+      readonly state?: GameState;
+      readonly fallRows?: FallRows;
+      readonly fallEats?: FallEats;
+    };
 
 /** Shape of a level JSON file in /src/game/levels/. */
 export interface LevelData {
@@ -204,7 +212,16 @@ type GravityResult =
       /** Dogs that entered the open exit while falling. */
       readonly exited: readonly Dog[];
     }
-  | { readonly status: 'dead'; readonly cause: DeathCause };
+  | {
+      readonly status: 'dead';
+      readonly cause: DeathCause;
+      readonly dogs: readonly Dog[];
+      readonly snacks: readonly Cell[];
+      readonly anyFell: boolean;
+      readonly rowsFallen: Readonly<Record<number, number>>;
+      readonly eatRows: Readonly<Record<number, readonly number[]>>;
+      readonly exited: readonly Dog[];
+    };
 
 /**
  * Which dogs are supported: a dog is supported if any segment sits directly
@@ -297,8 +314,12 @@ function settle(state: GameState, dogsIn: readonly Dog[]): GravityResult {
     for (let i = 0; i < dogs.length; i++) {
       if (supported.has(i) && !eaters.has(i)) continue;
       for (const c of dogs[i].cells) {
-        if (c.y >= state.height) return { status: 'dead', cause: 'fell' };
-        if (state.spikes.has(cellKey(c.x, c.y))) return { status: 'dead', cause: 'spikes' };
+        if (c.y >= state.height) {
+          return { status: 'dead', cause: 'fell', dogs, snacks, anyFell, rowsFallen, eatRows, exited };
+        }
+        if (state.spikes.has(cellKey(c.x, c.y))) {
+          return { status: 'dead', cause: 'spikes', dogs, snacks, anyFell, rowsFallen, eatRows, exited };
+        }
       }
     }
 
@@ -340,7 +361,22 @@ function finishAction(
   };
 
   const settled = settle(midState, dogs);
-  if (settled.status === 'dead') return { status: 'dead', cause: settled.cause };
+  if (settled.status === 'dead') {
+    const fallRows: Record<number, number> = {};
+    const fallEats: Record<number, readonly number[]> = {};
+    Object.entries(settled.rowsFallen).forEach(([id, rows]) => {
+      if (rows > 0) fallRows[Number(id)] = rows;
+      const eats = settled.eatRows[Number(id)];
+      if (eats.length > 0) fallEats[Number(id)] = eats;
+    });
+    return {
+      status: 'dead',
+      cause: settled.cause,
+      state: { ...midState, snacks: settled.snacks, dogs: settled.dogs },
+      fallRows,
+      fallEats,
+    };
+  }
   if (settled.anyFell) events.push('fell');
 
   const fallRows: Record<number, number> = {};
